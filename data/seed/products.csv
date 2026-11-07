@@ -1,0 +1,5 @@
+sku,name,aliases,allowed_units,kg_per_bag,active
+MAIZ-BLANCO,Maíz blanco,maiz blanco|maíz bco|blanco,kg|bultos,,true
+MAIZ-AMARILLO,Maíz amarillo,maiz amarillo|amarillo,kg|bultos,,true
+SORGO,Sorgo,sorgo grano,kg|bultos,,true
+SALVADO-TRIGO,Salvado de trigo,salvado|salvadillo,bultos,,true

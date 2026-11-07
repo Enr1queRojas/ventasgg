@@ -1,0 +1,19 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+
+# Secretos
+.env
+
+# Datos locales / producción (los CSV de data/seed sí se versionan)
+data/*.db
+data/*.db-*
+
+# Editor / SO
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
