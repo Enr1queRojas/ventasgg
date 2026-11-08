@@ -107,3 +107,30 @@ def test_transaction_rolls_back(conn):
             repository.upsert_customer(conn, name="Temporal", phone="+52 33 1111 2222")
             raise RuntimeError("falla")
     assert repository.get_customer_by_phone(conn, "+52 33 1111 2222", active_only=False) is None
+
+
+def test_migration_v1_to_v2_keeps_items_and_allows_piezas(db_path):
+    """Una base creada con el esquema v1 (unidades kg|bultos) se migra al arrancar sin perder partidas."""
+    from app.db.database import SCHEMA_PATH, connect
+
+    v1_schema = (
+        SCHEMA_PATH.read_text(encoding="utf-8")
+        .replace("CHECK (unit IN ('kg', 'bultos', 'piezas'))", "CHECK (unit IN ('kg', 'bultos'))")
+        .replace("PRAGMA user_version = 2;", "PRAGMA user_version = 1;")
+    )
+    conn = connect(db_path)
+    conn.executescript(v1_schema)
+    c = repository.upsert_customer(conn, name="C", phone="+52 55 1234 5678")
+    p = repository.upsert_product(conn, sku="CAJA", name="Caja", allowed_units=[Unit.KG])
+    o = repository.create_draft_order(conn, c.id)
+    conn.execute("INSERT INTO order_items (order_id, product_id, quantity, unit) VALUES (?, ?, 5, 'kg')", (o.id, p.id))
+    with pytest.raises(sqlite3.IntegrityError):
+        conn.execute("INSERT INTO order_items (order_id, product_id, quantity, unit) VALUES (?, ?, 5, 'piezas')", (o.id, p.id))
+
+    init_db(conn)
+
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == 2
+    assert [(i.quantity, i.unit) for i in repository.get_order_items(conn, o.id)] == [(5, Unit.KG)]
+    conn.execute("INSERT INTO order_items (order_id, product_id, quantity, unit) VALUES (?, ?, 3, 'piezas')", (o.id, p.id))
+    assert conn.execute("PRAGMA foreign_key_check").fetchall() == []
+    conn.close()

@@ -51,10 +51,10 @@ python -m scripts.seed_db          # carga/actualiza clientes y productos desde 
 
 | Columna | Ejemplo | Notas |
 |---|---|---|
-| `sku` | MAIZ-BLANCO | Único; se guarda en mayúsculas |
+| `codigo` | MAIZ-BLANCO | Código (SKU) único; se guarda en mayúsculas. También se acepta la columna `sku` |
 | `name` | Maíz blanco | |
 | `aliases` | maiz blanco\|blanco | Separados por `\|` |
-| `allowed_units` | kg\|bultos | `kg` y/o `bultos` |
+| `allowed_units` | kg\|bultos | `kg`, `bultos` y/o `piezas` (cajas o pacas se cuentan por pieza) |
 | `kg_per_bag` | 40 | Opcional. Si está vacío, nunca se convierten bultos a kg |
 | `active` | true | Los inactivos no se reconocen en conversaciones |
 

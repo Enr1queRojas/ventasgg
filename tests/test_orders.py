@@ -287,3 +287,13 @@ def test_agent_failure_retries_then_apologizes(conn, customer, products, db_path
 
 def test_order_status_values_constant():
     assert OrderStatus.PENDING_SALES.value == "pending_sales"
+
+
+def test_paper_order_in_piezas(chat):
+    repository.upsert_product(chat.conn, sku="CAJA-PAPEL", name="Caja de papel", allowed_units=["piezas"])
+    [summary] = chat.say(
+        "20 cajas de papel para el martes",
+        turn(items=[item("cajas de papel", 20, None, "CAJA-PAPEL")], requested_date=future()),
+    )
+    assert "Caja de papel: 20 piezas" in summary
+    assert chat.items(chat.order()["id"]) == [("CAJA-PAPEL", 20, "piezas")]

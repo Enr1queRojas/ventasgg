@@ -26,6 +26,8 @@ def format_quantity(quantity: float, unit: Unit) -> str:
     number = f"{quantity:g}" if quantity != int(quantity) else f"{int(quantity):,}"
     if unit is Unit.KG:
         return f"{number} kg"
+    if unit is Unit.PIEZAS:
+        return f"{number} {'pieza' if quantity == 1 else 'piezas'}"
     return f"{number} {'bulto' if quantity == 1 else 'bultos'}"
 
 

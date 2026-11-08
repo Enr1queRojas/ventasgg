@@ -4,6 +4,7 @@ from pathlib import Path
 
 import pytest
 
+from app.db import repository
 from app.models import Unit
 from app.services.catalog_service import (
     CatalogError,
@@ -114,3 +115,37 @@ def test_seed_rejects_duplicate_phone_in_file(conn, tmp_path: Path):
     bad.write_text("name,phone,active\nA,+52 55 1234 5678,1\nB,5215512345678,1\n", encoding="utf-8")
     with pytest.raises(SeedError, match="repetido"):
         seed_customers(conn, bad)
+
+
+@pytest.fixture
+def paper_catalog(conn) -> CatalogService:
+    repository.upsert_product(conn, sku="CAJA-PAPEL", name="Caja de papel", aliases=["cajas de papel"], allowed_units=[Unit.PIEZAS])
+    repository.upsert_product(conn, sku="PACA-PAPEL", name="Paca de papel", aliases=["pacas de papel"], allowed_units=[Unit.PIEZAS])
+    return CatalogService.from_db(conn)
+
+
+@pytest.mark.parametrize("text", ["piezas", "pieza", "pzas", "cajas", "caja", "pacas"])
+def test_parse_unit_piezas(text):
+    assert CatalogService.parse_unit(text) is Unit.PIEZAS
+
+
+def test_piezas_validation(paper_catalog):
+    assert paper_catalog.validate_line("CAJA-PAPEL", 20, "cajas").unit is Unit.PIEZAS
+    with pytest.raises(CatalogError) as exc:
+        paper_catalog.validate_line("CAJA-PAPEL", 2.5, "piezas")
+    assert exc.value.code is CatalogErrorCode.INVALID_QUANTITY
+    with pytest.raises(CatalogError) as exc:
+        paper_catalog.validate_line("CAJA-PAPEL", 20, "kg")
+    assert exc.value.code is CatalogErrorCode.UNIT_NOT_ALLOWED
+    assert CatalogService.to_kg(paper_catalog.get_by_sku("CAJA-PAPEL"), 20, Unit.PIEZAS) is None
+
+
+def test_resolve_paper(paper_catalog):
+    assert paper_catalog.resolve("cajas").product.sku == "CAJA-PAPEL"
+    assert paper_catalog.resolve("papel").status is MatchStatus.AMBIGUOUS
+
+
+def test_seed_accepts_legacy_sku_column(conn, tmp_path: Path):
+    legacy = tmp_path / "products.csv"
+    legacy.write_text("sku,name,aliases,allowed_units,kg_per_bag,active\nX-1,Producto X,,kg,,true\n", encoding="utf-8")
+    assert seed_products(conn, legacy).inserted == 1

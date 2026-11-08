@@ -12,7 +12,29 @@ from contextlib import contextmanager
 from pathlib import Path
 
 SCHEMA_PATH = Path(__file__).with_name("schema.sql")
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
+
+# Migraciones para bases existentes: versión de origen -> SQL que la lleva a la siguiente.
+# SQLite no permite modificar un CHECK, así que se reconstruye la tabla.
+MIGRATIONS: dict[int, str] = {
+    1: """
+    BEGIN;
+    CREATE TABLE order_items_v2 (
+        id          INTEGER PRIMARY KEY,
+        order_id    INTEGER NOT NULL REFERENCES orders(id) ON DELETE CASCADE,
+        product_id  INTEGER NOT NULL REFERENCES products(id),
+        quantity    REAL    NOT NULL CHECK (quantity > 0),
+        unit        TEXT    NOT NULL CHECK (unit IN ('kg', 'bultos', 'piezas')),
+        UNIQUE (order_id, product_id, unit)
+    );
+    INSERT INTO order_items_v2 (id, order_id, product_id, quantity, unit)
+        SELECT id, order_id, product_id, quantity, unit FROM order_items;
+    DROP TABLE order_items;
+    ALTER TABLE order_items_v2 RENAME TO order_items;
+    PRAGMA user_version = 2;
+    COMMIT;
+    """,
+}
 
 
 def connect(db_path: Path | str) -> sqlite3.Connection:
@@ -53,7 +75,14 @@ def transaction(conn: sqlite3.Connection) -> Iterator[sqlite3.Connection]:
 
 
 def init_db(conn: sqlite3.Connection) -> None:
-    """Crea tablas e índices si no existen."""
+    """Crea tablas e índices si no existen y aplica las migraciones pendientes."""
+    version = conn.execute("PRAGMA user_version").fetchone()[0]
+    if version > SCHEMA_VERSION:
+        raise RuntimeError(f"La base es de una versión más nueva ({version}) que este código ({SCHEMA_VERSION})")
+    if version > 0:  # base existente: migrar antes de ejecutar el esquema actual
+        while version < SCHEMA_VERSION:
+            conn.executescript(MIGRATIONS[version])
+            version = conn.execute("PRAGMA user_version").fetchone()[0]
     conn.executescript(SCHEMA_PATH.read_text(encoding="utf-8"))
     version = conn.execute("PRAGMA user_version").fetchone()[0]
     if version != SCHEMA_VERSION:

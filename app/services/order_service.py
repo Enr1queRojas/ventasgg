@@ -66,8 +66,11 @@ def _summary_lines(conn: sqlite3.Connection, order_id: int) -> list[texts.Summar
     ]
 
 
+_UNIT_WORDS = {Unit.KG: "kilos", Unit.BULTOS: "bultos", Unit.PIEZAS: "piezas"}
+
+
 def _units_text(units: tuple[Unit, ...]) -> str:
-    return " o ".join("kilos" if u is Unit.KG else "bultos" for u in units)
+    return " o ".join(_UNIT_WORDS[u] for u in units)
 
 
 class TurnApplier:
@@ -165,7 +168,7 @@ class TurnApplier:
                 issues.append(f"¿Cuántos {_units_text(product.allowed_units)} de {product.name} necesitas?")
                 continue
             if unit is None:
-                issues.append(f"Los {item.quantity:g} de {product.name}, ¿son bultos o kilos?")
+                issues.append(f"Los {item.quantity:g} de {product.name}, ¿son {_units_text(product.allowed_units)}?")
                 continue
             try:
                 line = self.catalog.validate_line(product.sku, item.quantity, unit)

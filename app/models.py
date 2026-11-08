@@ -13,6 +13,7 @@ from pydantic import BaseModel, ConfigDict, Field
 class Unit(StrEnum):
     KG = "kg"
     BULTOS = "bultos"
+    PIEZAS = "piezas"  # cajas, pacas u otras unidades que se cuentan por pieza
 
 
 class Urgency(StrEnum):
@@ -133,7 +134,9 @@ class AgentItem(BaseModel):
     product_text: str = Field(description="Producto tal como lo nombró el cliente.")
     sku: str | None = Field(description="SKU del catálogo si la correspondencia es inequívoca; null si hay duda.")
     quantity: float | None = Field(description="Cantidad numérica; null si no se ha indicado.")
-    unit: Literal["kg", "bultos"] | None = Field(description="Unidad; null si no se ha indicado.")
+    unit: Literal["kg", "bultos", "piezas"] | None = Field(
+        description="Unidad; null si no se ha indicado. Cajas, pacas o piezas -> piezas."
+    )
 
 
 class AgentTurn(BaseModel):
