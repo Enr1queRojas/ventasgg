@@ -21,7 +21,19 @@ UNIT_SYNONYMS: dict[str, Unit] = {
     "kilogramos": Unit.KG,
     "bulto": Unit.BULTOS,
     "bultos": Unit.BULTOS,
+    "pieza": Unit.PIEZAS,
+    "piezas": Unit.PIEZAS,
+    "pz": Unit.PIEZAS,
+    "pza": Unit.PIEZAS,
+    "pzas": Unit.PIEZAS,
+    "caja": Unit.PIEZAS,
+    "cajas": Unit.PIEZAS,
+    "paca": Unit.PIEZAS,
+    "pacas": Unit.PIEZAS,
 }
+
+# Unidades que solo admiten cantidades enteras.
+WHOLE_UNITS = frozenset({Unit.BULTOS, Unit.PIEZAS})
 
 _NON_ALNUM = re.compile(r"[^a-z0-9]+")
 
@@ -130,7 +142,7 @@ class CatalogService:
 
         parsed_unit = self.parse_unit(unit)
         if parsed_unit is None:
-            raise CatalogError(CatalogErrorCode.INVALID_UNIT, f"Unidad no reconocida: '{unit}'. Usa kg o bultos.")
+            raise CatalogError(CatalogErrorCode.INVALID_UNIT, f"Unidad no reconocida: '{unit}'. Usa kg, bultos o piezas.")
         if parsed_unit not in product.allowed_units:
             allowed = " o ".join(u.value for u in product.allowed_units)
             raise CatalogError(
@@ -140,17 +152,19 @@ class CatalogService:
 
         if isinstance(quantity, bool) or not isinstance(quantity, int | float) or not quantity > 0:
             raise CatalogError(CatalogErrorCode.INVALID_QUANTITY, "La cantidad debe ser un número mayor que cero.")
-        if parsed_unit is Unit.BULTOS and float(quantity) != int(quantity):
-            raise CatalogError(CatalogErrorCode.INVALID_QUANTITY, "Los bultos deben pedirse en cantidades enteras.")
+        if parsed_unit in WHOLE_UNITS and float(quantity) != int(quantity):
+            raise CatalogError(
+                CatalogErrorCode.INVALID_QUANTITY, f"Los {parsed_unit.value} deben pedirse en cantidades enteras."
+            )
 
         return ValidatedLine(product=product, quantity=float(quantity), unit=parsed_unit)
 
     @staticmethod
     def to_kg(product: Product, quantity: float, unit: Unit) -> float | None:
-        """Kilogramos equivalentes, o ``None`` si son bultos sin ``kg_per_bag`` configurado."""
+        """Kilogramos equivalentes, o ``None`` si son piezas o bultos sin ``kg_per_bag`` configurado."""
         if unit is Unit.KG:
             return quantity
-        if product.kg_per_bag is None:
+        if unit is not Unit.BULTOS or product.kg_per_bag is None:
             return None
         return quantity * product.kg_per_bag
 

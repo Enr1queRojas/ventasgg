@@ -16,7 +16,7 @@ CREATE TABLE IF NOT EXISTS products (
     id             INTEGER PRIMARY KEY,
     sku            TEXT    NOT NULL UNIQUE CHECK (length(trim(sku)) > 0),
     name           TEXT    NOT NULL CHECK (length(trim(name)) > 0),
-    -- Arreglos JSON de texto. Los valores de allowed_units se validan en Python (kg | bultos).
+    -- Arreglos JSON de texto. Los valores de allowed_units se validan en Python (kg | bultos | piezas).
     aliases        TEXT    NOT NULL DEFAULT '[]'
                            CHECK (json_valid(aliases) AND json_type(aliases) = 'array'),
     allowed_units  TEXT    NOT NULL
@@ -59,7 +59,7 @@ CREATE TABLE IF NOT EXISTS order_items (
     order_id    INTEGER NOT NULL REFERENCES orders(id) ON DELETE CASCADE,
     product_id  INTEGER NOT NULL REFERENCES products(id),
     quantity    REAL    NOT NULL CHECK (quantity > 0),
-    unit        TEXT    NOT NULL CHECK (unit IN ('kg', 'bultos')),
+    unit        TEXT    NOT NULL CHECK (unit IN ('kg', 'bultos', 'piezas')),
     UNIQUE (order_id, product_id, unit)
 );
 
@@ -84,6 +84,6 @@ CREATE TABLE IF NOT EXISTS messages (
 CREATE INDEX IF NOT EXISTS ix_messages_queue ON messages(direction, status, next_attempt_at, id);
 CREATE INDEX IF NOT EXISTS ix_messages_phone ON messages(phone, id);
 
-PRAGMA user_version = 1;
+PRAGMA user_version = 2;
 
 COMMIT;

@@ -1,0 +1,24 @@
+# Secretos: se pasan con env_file en compose, nunca dentro de la imagen
+.env
+.env.*
+
+# Datos locales
+data/*.db
+data/*.db-*
+
+# Entorno y herramientas
+.venv/
+venv/
+.git/
+.gitignore
+.pytest_cache/
+**/__pycache__/
+*.py[cod]
+.vscode/
+.idea/
+
+# No necesarios en producción
+tests/
+Dockerfile
+compose.yaml
+.dockerignore

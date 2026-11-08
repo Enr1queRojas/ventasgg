@@ -1,5 +1,11 @@
-sku,name,aliases,allowed_units,kg_per_bag,active
+codigo,name,aliases,allowed_units,kg_per_bag,active
 MAIZ-BLANCO,Maíz blanco,maiz blanco|maíz bco|blanco,kg|bultos,,true
 MAIZ-AMARILLO,Maíz amarillo,maiz amarillo|amarillo,kg|bultos,,true
 SORGO,Sorgo,sorgo grano,kg|bultos,,true
-SALVADO-TRIGO,Salvado de trigo,salvado|salvadillo,bultos,,true
+ALUBIA,Alubia,alubias|frijol alubia,kg|bultos,,true
+PACA-PAPEL,Paca de papel,pacas de papel|paca papel,piezas,,true
+CAJA-PAPEL,Caja de papel,cajas de papel|caja papel,piezas,,true
+FRIJOL-BILLZ,Frijol billz,billz,kg|bultos,,true
+FRIJOL-PINTO,Frijol pinto,pinto,kg|bultos,,true
+FRIJOL-PERUANO,Frijol peruano,peruano,kg|bultos,,true
+FRIJOL-SALTILLO,Frijol saltillo,saltillo,kg|bultos,,true

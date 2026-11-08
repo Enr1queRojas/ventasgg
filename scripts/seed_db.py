@@ -4,7 +4,7 @@ Uso:  python -m scripts.seed_db [--db RUTA] [--customers CSV] [--products CSV]
 
 Formato de los CSV (UTF-8; listas separadas por "|"):
   customers.csv: name,phone,active
-  products.csv:  sku,name,aliases,allowed_units,kg_per_bag,active
+  products.csv:  codigo,name,aliases,allowed_units,kg_per_bag,active   (codigo = SKU; también se acepta "sku")
 
 Si una fila es inválida no se guarda nada y se indica la línea con el error.
 """
@@ -85,9 +85,9 @@ def seed_products(conn: sqlite3.Connection, path: Path) -> SeedResult:
     seen: set[str] = set()
     for line, row in _rows(path):
         try:
-            sku = (row.get("sku") or "").strip().upper()
+            sku = (row.get("codigo") or row.get("sku") or "").strip().upper()
             if not sku:
-                raise ValueError("falta el SKU")
+                raise ValueError("falta el código del producto (columna codigo)")
             if sku in seen:
                 raise ValueError(f"SKU repetido en el archivo: {sku}")
             seen.add(sku)
