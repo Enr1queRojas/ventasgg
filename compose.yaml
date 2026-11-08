@@ -1,0 +1,27 @@
+services:
+  sales-bot:
+    build: .
+    image: ventasgg-sales-bot:latest
+    container_name: ventasgg-sales-bot
+    env_file: .env
+    # Estos valores tienen prioridad sobre .env dentro del contenedor.
+    environment:
+      APP_ENV: production
+      APP_PORT: "8003"
+      DATABASE_PATH: /data/sales_bot.db
+      TZ: America/Mexico_City
+    ports:
+      # Solo en loopback: el acceso público es por Cloudflare Tunnel (ventas.proadel.app -> 127.0.0.1:8003).
+      - "127.0.0.1:8003:8003"
+    volumes:
+      - sales-bot-data:/data
+    restart: unless-stopped
+    stop_grace_period: 30s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
+
+volumes:
+  sales-bot-data:
