@@ -64,16 +64,17 @@ def _extract_text(msg: dict[str, Any]) -> str | None:
     return None
 
 
-def parse_messages(payload: dict[str, Any], phone_number_id: str | None) -> list[InboundMessage]:
-    """Extrae mensajes entrantes; descarta estados de entrega y eventos irrelevantes.
+@dataclass(frozen=True)
+class DeliveryStatus:
+    message_id: str  # wamid del mensaje saliente
+    status: str  # sent | delivered | read | failed
+    error: str | None
 
-    Si ``phone_number_id`` está configurado, ignora eventos dirigidos a otro número
-    de la misma cuenta de WhatsApp Business.
-    """
+
+def _relevant_values(payload: dict[str, Any], phone_number_id: str | None) -> list[dict[str, Any]]:
     if payload.get("object") != "whatsapp_business_account":
         return []
-
-    result: list[InboundMessage] = []
+    values = []
     for entry in payload.get("entry") or []:
         for change in entry.get("changes") or []:
             if change.get("field") != "messages":
@@ -83,20 +84,48 @@ def parse_messages(payload: dict[str, Any], phone_number_id: str | None) -> list
             if phone_number_id and target and target != phone_number_id:
                 logger.info("Evento para otro phone_number_id (%s); se ignora", target)
                 continue
-            for msg in value.get("messages") or []:
-                message_id, wa_id, meta_type = msg.get("id"), msg.get("from"), msg.get("type")
-                if not message_id or not wa_id or meta_type in _IGNORED_TYPES:
-                    continue
-                text = _extract_text(msg) if meta_type in _TEXT_TYPES else None
-                result.append(
-                    InboundMessage(
-                        message_id=message_id,
-                        wa_id=wa_id,
-                        message_type=MessageType.TEXT if text else MessageType.UNSUPPORTED,
-                        text=text,
-                        meta_type=meta_type or "unknown",
-                    )
+            values.append(value)
+    return values
+
+
+def parse_statuses(payload: dict[str, Any], phone_number_id: str | None) -> list[DeliveryStatus]:
+    """Avisos de entrega de mensajes salientes (Meta acepta el envío y luego informa el resultado)."""
+    result = []
+    for value in _relevant_values(payload, phone_number_id):
+        for st in value.get("statuses") or []:
+            if not st.get("id") or not st.get("status"):
+                continue
+            error = None
+            if st.get("errors"):
+                e = st["errors"][0]
+                details = (e.get("error_data") or {}).get("details")
+                error = f"Meta code={e.get('code')}: {e.get('title') or e.get('message')}" + (f" ({details})" if details else "")
+            result.append(DeliveryStatus(st["id"], st["status"], error))
+    return result
+
+
+def parse_messages(payload: dict[str, Any], phone_number_id: str | None) -> list[InboundMessage]:
+    """Extrae mensajes entrantes; descarta estados de entrega y eventos irrelevantes.
+
+    Si ``phone_number_id`` está configurado, ignora eventos dirigidos a otro número
+    de la misma cuenta de WhatsApp Business.
+    """
+    result: list[InboundMessage] = []
+    for value in _relevant_values(payload, phone_number_id):
+        for msg in value.get("messages") or []:
+            message_id, wa_id, meta_type = msg.get("id"), msg.get("from"), msg.get("type")
+            if not message_id or not wa_id or meta_type in _IGNORED_TYPES:
+                continue
+            text = _extract_text(msg) if meta_type in _TEXT_TYPES else None
+            result.append(
+                InboundMessage(
+                    message_id=message_id,
+                    wa_id=wa_id,
+                    message_type=MessageType.TEXT if text else MessageType.UNSUPPORTED,
+                    text=text,
+                    meta_type=meta_type or "unknown",
                 )
+            )
     return result
 
 
@@ -114,6 +143,19 @@ def _persist(settings: Settings, messages: list[InboundMessage]) -> int:
             )
             new += inserted is not None
     return new
+
+
+def _record_statuses(settings: Settings, statuses: list[DeliveryStatus]) -> None:
+    with open_db(settings.database_path) as conn, transaction(conn):
+        for st in statuses:
+            message_id = repository.find_outbound_by_wamid(conn, st.message_id)
+            if message_id is None:
+                continue  # p. ej. mensajes enviados desde el panel de Meta
+            if st.status == "failed":
+                repository.mark_delivery_failed(conn, message_id, st.error or "Meta informó fallo de entrega")
+                logger.error("Meta no pudo entregar el mensaje %s: %s", message_id, st.error)
+            else:
+                logger.info("Mensaje %s: %s", message_id, st.status)
 
 
 # --------------------------------------------------------------------------- routes
@@ -160,17 +202,24 @@ async def receive_event(request: Request) -> dict[str, str]:
         raise HTTPException(status_code=400)
 
     messages = parse_messages(payload, settings.whatsapp_phone_number_id)
+    statuses = parse_statuses(payload, settings.whatsapp_phone_number_id)
     wabas = ",".join(str(e.get("id")) for e in payload.get("entry") or [] if isinstance(e, dict))
-    logger.info("Evento de Meta recibido (WABA %s): %d mensaje(s) de cliente", wabas or "-", len(messages))
-    if not messages:
+    logger.info(
+        "Evento de Meta recibido (WABA %s): %d mensaje(s) de cliente, %d aviso(s) de entrega",
+        wabas or "-", len(messages), len(statuses),
+    )
+    if not messages and not statuses:
         return {"status": "ignored"}
 
     try:
-        new = await run_in_threadpool(_persist, settings, messages)
+        if statuses:
+            await run_in_threadpool(_record_statuses, settings, statuses)
+        if messages:
+            new = await run_in_threadpool(_persist, settings, messages)
+            logger.info("Mensajes recibidos: %d (nuevos: %d, duplicados: %d)", len(messages), new, len(messages) - new)
     except Exception:
-        # Error 500 => Meta reintenta la entrega; no se pierde el mensaje.
-        logger.exception("No se pudieron guardar %d mensaje(s) entrantes", len(messages))
+        # Error 500 => Meta reintenta la entrega; no se pierde el evento.
+        logger.exception("No se pudo guardar el evento de Meta")
         raise HTTPException(status_code=500) from None
 
-    logger.info("Mensajes recibidos: %d (nuevos: %d, duplicados: %d)", len(messages), new, len(messages) - new)
     return {"status": "ok"}

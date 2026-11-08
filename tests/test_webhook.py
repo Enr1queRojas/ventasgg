@@ -129,10 +129,38 @@ def test_post_rejected_without_app_secret(settings):
         assert post(c, event(text_msg())).status_code == 503
 
 
-def test_status_updates_are_ignored(client, wa_settings):
-    statuses = [{"id": "wamid.out", "status": "delivered", "recipient_id": "5215512345678"}]
-    assert post(client, event(statuses=statuses)).json() == {"status": "ignored"}
+def test_status_for_unknown_message_is_harmless(client, wa_settings):
+    statuses = [{"id": "wamid.desconocido", "status": "delivered", "recipient_id": "5215512345678"}]
+    assert post(client, event(statuses=statuses)).status_code == 200
     assert stored(wa_settings) == []
+
+
+def _sent_outbound(wa_settings, wamid="wamid.out1"):
+    with open_db(wa_settings.database_path) as conn:
+        from app.db import repository
+
+        mid = repository.enqueue_outbound(conn, phone="523311112222", text="NUEVO PEDIDO")
+        repository.mark_sent(conn, mid, wamid)
+    return mid
+
+
+def test_failed_delivery_status_marks_message_failed(client, wa_settings):
+    _sent_outbound(wa_settings)
+    statuses = [{
+        "id": "wamid.out1", "status": "failed", "recipient_id": "523311112222",
+        "errors": [{"code": 131047, "title": "Re-engagement message",
+                    "error_data": {"details": "Message failed to send because more than 24 hours have passed"}}],
+    }]
+    assert post(client, event(statuses=statuses)).status_code == 200
+    [m] = stored(wa_settings)
+    assert m["status"] == "failed"
+    assert "131047" in m["last_error"] and "24 hours" in m["last_error"]
+
+
+def test_delivered_status_keeps_sent(client, wa_settings):
+    _sent_outbound(wa_settings)
+    post(client, event(statuses=[{"id": "wamid.out1", "status": "delivered", "recipient_id": "523311112222"}]))
+    assert stored(wa_settings)[0]["status"] == "sent"
 
 
 def test_other_phone_number_id_ignored(client, wa_settings):

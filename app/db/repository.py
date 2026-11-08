@@ -318,6 +318,21 @@ def mark_sent(conn: sqlite3.Connection, message_id: int, whatsapp_message_id: st
     )
 
 
+def find_outbound_by_wamid(conn: sqlite3.Connection, whatsapp_message_id: str) -> int | None:
+    row = conn.execute(
+        "SELECT id FROM messages WHERE whatsapp_message_id = ? AND direction = 'outbound'", (whatsapp_message_id,)
+    ).fetchone()
+    return row["id"] if row else None
+
+
+def mark_delivery_failed(conn: sqlite3.Connection, message_id: int, error: str) -> None:
+    """Meta aceptó el envío pero después informó que no pudo entregarlo."""
+    conn.execute(
+        "UPDATE messages SET status = 'failed', last_error = ?, updated_at = ? WHERE id = ?",
+        (error[:1000], utc_now(), message_id),
+    )
+
+
 def schedule_retry(conn: sqlite3.Connection, message_id: int, *, attempts: int, next_attempt_at: str, error: str) -> None:
     conn.execute(
         """UPDATE messages SET status = 'pending', attempts = ?, next_attempt_at = ?, last_error = ?,
