@@ -61,6 +61,14 @@ def unknown_customer_message(sales_phone: str | None) -> str:
     )
 
 
+def greeting(customer_name: str) -> str:
+    """Saludo fijo cuando el cliente saluda sin tener un pedido en curso."""
+    return (
+        f"Hola {customer_name}\n"
+        "Por favor indica cuántos kilos de Maíz, Frijol (Bill-z, Peruano, Pinto, Saltillo) o papel necesitas."
+    )
+
+
 def unsupported_message_reply() -> str:
     return (
         "Por ahora solo puedo leer mensajes de texto. "

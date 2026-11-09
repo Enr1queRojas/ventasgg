@@ -18,7 +18,7 @@ Documentos:
 | Audio, foto, documento | Pide el pedido por texto |
 | Cliente registrado | El modelo (`OPENAI_MODEL`) interpreta; Python valida contra el catálogo, actualiza el borrador, pregunta lo que falta y, con el pedido completo, muestra un resumen. Solo un "sí" al resumen vigente registra el pedido (`pending_sales`, folio `PED-0001`) y avisa al vendedor |
 
-El modelo solo interpreta y redacta saludos/respuestas a preguntas. Resúmenes, confirmaciones, folios y el aviso de que **ventas asignará y confirmará la fecha de entrega** los genera el backend. Si `OPENAI_API_KEY` no está configurada, los clientes reciben una respuesta provisional.
+El modelo solo interpreta y redacta respuestas a preguntas. El saludo (cuando el cliente saluda sin pedido en curso) es un texto fijo: `greeting` en `app/services/notification_service.py`. Resúmenes, confirmaciones, folios y el aviso de que **ventas asignará y confirmará la fecha de entrega** los genera el backend. Si `OPENAI_API_KEY` no está configurada, los clientes reciben una respuesta provisional.
 
 ## Requisitos
 

@@ -315,10 +315,24 @@ def test_remove_item(chat):
 # ------------------------------------------------------------------ respuestas del modelo
 
 
-def test_greeting_uses_model_reply(chat):
+def test_greeting_is_fixed_text(chat):
     [reply] = chat.say("Hola", turn(AgentIntent.GREETING, reply="¡Hola, Cliente! ¿Qué necesitas hoy?"))
-    assert reply == "¡Hola, Cliente! ¿Qué necesitas hoy?"
+    assert reply == (
+        "Hola Cliente de prueba\n"
+        "Por favor indica cuántos kilos de Maíz, Frijol (Bill-z, Peruano, Pinto, Saltillo) o papel necesitas."
+    )
     assert chat.order() is None  # un saludo no crea borrador
+
+
+def test_greeting_with_order_in_progress_asks_what_is_missing(chat):
+    chat.say("Necesito maíz blanco", turn(items=[item("maíz blanco", sku="MAIZ-BLANCO")]))
+    [reply] = chat.say("Hola", turn(AgentIntent.GREETING, reply="¡Hola!"))
+    assert "Por favor indica" not in reply  # no reinicia la conversación a mitad del pedido
+
+
+def test_question_uses_model_reply(chat):
+    [reply] = chat.say("¿Venden sorgo?", turn(AgentIntent.QUESTION, reply="Sí, tenemos sorgo en kilos o bultos."))
+    assert reply == "Sí, tenemos sorgo en kilos o bultos."
 
 
 def test_unsafe_model_reply_is_replaced(chat):
