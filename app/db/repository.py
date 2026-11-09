@@ -7,7 +7,7 @@ transacción (``with transaction(conn): ...``) cuando agrupa varias escrituras.
 import json
 import sqlite3
 from collections.abc import Iterable, Sequence
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 from app.models import (
     ACTIVE_ORDER_STATUSES,
@@ -65,6 +65,39 @@ def upsert_customer(conn: sqlite3.Connection, *, name: str, phone: str, active: 
         (name.strip(), normalize_phone(phone), int(active)),
     ).fetchone()
     return _customer(row)
+
+
+def set_customer_active(conn: sqlite3.Connection, phone: str, active: bool) -> Customer | None:
+    """Activa o desactiva por teléfono. Devuelve ``None`` si el número no está registrado."""
+    row = conn.execute(
+        "UPDATE customers SET active = ? WHERE phone = ? RETURNING *", (int(active), normalize_phone(phone))
+    ).fetchone()
+    return _customer(row) if row else None
+
+
+def list_customers(
+    conn: sqlite3.Connection, *, search: str | None = None, active_only: bool = False, limit: int = 500
+) -> list[Customer]:
+    """Clientes ordenados por nombre; ``search`` filtra por nombre o dígitos del teléfono."""
+    sql, params = "SELECT * FROM customers WHERE 1 = 1", []
+    if active_only:
+        sql += " AND active = 1"
+    if search and search.strip():
+        digits = "".join(c for c in search if c.isdigit())
+        sql += " AND (name LIKE ? ESCAPE '\\'" + (" OR phone LIKE ?" if digits else "") + ")"
+        escaped = search.strip().replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+        params.append(f"%{escaped}%")
+        if digits:
+            params.append(f"%{digits}%")
+    sql += " ORDER BY name COLLATE NOCASE, id LIMIT ?"
+    params.append(limit)
+    return [_customer(r) for r in conn.execute(sql, params)]
+
+
+def count_customers(conn: sqlite3.Connection) -> tuple[int, int]:
+    """(activos, total)."""
+    row = conn.execute("SELECT COALESCE(SUM(active), 0), COUNT(*) FROM customers").fetchone()
+    return row[0], row[1]
 
 
 # --------------------------------------------------------------------------- products
@@ -213,6 +246,29 @@ def update_order(conn: sqlite3.Connection, order_id: int, **fields: object) -> N
     )
 
 
+_TRACKING_FIELDS = {"delivery_date", "sales_note", "delivered_at", "cancelled_at"}
+
+
+def transition_order(
+    conn: sqlite3.Connection, order_id: int, *, from_statuses: Sequence[str], status: str, **fields: object
+) -> bool:
+    """Cambia el estado solo si el pedido sigue en uno de ``from_statuses`` (evita dobles cambios)."""
+    unknown = set(fields) - _TRACKING_FIELDS
+    if unknown:
+        raise ValueError(f"Campos no editables: {unknown}")
+    assignments = "".join(f", {name} = ?" for name in fields)
+    placeholders = ",".join("?" * len(from_statuses))
+    return conn.execute(
+        f"UPDATE orders SET status = ?{assignments}, updated_at = ? WHERE id = ? AND status IN ({placeholders})",
+        (status, *[str(v) if v is not None else None for v in fields.values()], utc_now(), order_id, *from_statuses),
+    ).rowcount == 1
+
+
+def find_order_by_folio(conn: sqlite3.Connection, folio: str) -> Order | None:
+    row = conn.execute("SELECT * FROM orders WHERE folio = ?", (folio,)).fetchone()
+    return _order(row) if row else None
+
+
 def register_order(conn: sqlite3.Connection, order_id: int) -> str | None:
     """Pasa un pedido de ``awaiting_confirmation`` a ``pending_sales`` y asigna folio.
 
@@ -292,13 +348,14 @@ def enqueue_outbound(
     text: str,
     message_type: MessageType = MessageType.TEXT,
     order_id: int | None = None,
+    template_payload: str | None = None,
 ) -> int:
     row = conn.execute(
         """
-        INSERT INTO messages (direction, phone, text, message_type, status, order_id)
-        VALUES (?, ?, ?, ?, ?, ?) RETURNING id
+        INSERT INTO messages (direction, phone, text, message_type, status, order_id, template_payload)
+        VALUES (?, ?, ?, ?, ?, ?, ?) RETURNING id
         """,
-        (MessageDirection.OUTBOUND, phone, text, message_type, MessageStatus.PENDING, order_id),
+        (MessageDirection.OUTBOUND, phone, text, message_type, MessageStatus.PENDING, order_id, template_payload),
     ).fetchone()
     return row["id"]
 
@@ -366,3 +423,96 @@ def list_orders_by_status(conn: sqlite3.Connection, statuses: Sequence[str]) -> 
         f"SELECT * FROM orders WHERE status IN ({placeholders}) ORDER BY created_at", tuple(statuses)
     )
     return [_order(r) for r in rows]
+
+
+def list_orders_for_admin(
+    conn: sqlite3.Connection, *, statuses: Sequence[str] | None = None, search: str | None = None,
+    date_from: str | None = None, date_to: str | None = None, limit: int = 200,
+) -> list[dict]:
+    """Pedidos registrados (con folio) con cliente y partidas, para el panel, WhatsApp y la exportación.
+
+    ``date_from``/``date_to`` (YYYY-MM-DD, inclusive) filtran por fecha de registro (``confirmed_at``, UTC).
+    """
+    sql = """
+        SELECT o.*, c.name AS customer_name, c.phone AS customer_phone,
+               (SELECT group_concat(p.name || ': ' || printf('%g', i.quantity) || ' ' || i.unit, '; ')
+                  FROM order_items i JOIN products p ON p.id = i.product_id
+                 WHERE i.order_id = o.id) AS items
+          FROM orders o JOIN customers c ON c.id = o.customer_id
+         WHERE o.folio IS NOT NULL
+    """
+    params: list[object] = []
+    if statuses:
+        sql += f" AND o.status IN ({','.join('?' * len(statuses))})"
+        params += list(statuses)
+    if search and search.strip():
+        term = search.strip()
+        digits = "".join(ch for ch in term if ch.isdigit())
+        sql += " AND (c.name LIKE ? OR o.folio LIKE ?" + (" OR c.phone LIKE ?" if digits else "") + ")"
+        params += [f"%{term}%", f"%{term}%"] + ([f"%{digits}%"] if digits else [])
+    if date_from:
+        sql += " AND substr(o.confirmed_at, 1, 10) >= ?"
+        params.append(date_from)
+    if date_to:
+        sql += " AND substr(o.confirmed_at, 1, 10) <= ?"
+        params.append(date_to)
+    sql += " ORDER BY o.id DESC LIMIT ?"
+    params.append(limit)
+    return [dict(r) for r in conn.execute(sql, params)]
+
+
+def count_orders_by_status(conn: sqlite3.Connection) -> dict[str, int]:
+    rows = conn.execute("SELECT status, COUNT(*) FROM orders WHERE folio IS NOT NULL GROUP BY status")
+    return {status: count for status, count in rows}
+
+
+def list_recent_orders(conn: sqlite3.Connection, *, limit: int = 100) -> list[dict]:
+    """Pedidos más recientes (sin borradores vacíos) con cliente y partidas, para el panel de administración."""
+    rows = conn.execute(
+        """
+        SELECT o.id, o.folio, o.status, o.requested_date, o.urgency, o.urgency_note, o.notes,
+               o.created_at, o.confirmed_at, c.name AS customer_name, c.phone AS customer_phone,
+               (SELECT group_concat(p.name || ': ' || printf('%g', i.quantity) || ' ' || i.unit, '; ')
+                  FROM order_items i JOIN products p ON p.id = i.product_id
+                 WHERE i.order_id = o.id) AS items
+          FROM orders o JOIN customers c ON c.id = o.customer_id
+         WHERE o.status <> 'draft' OR EXISTS (SELECT 1 FROM order_items i WHERE i.order_id = o.id)
+         ORDER BY o.id DESC
+         LIMIT ?
+        """,
+        (limit,),
+    )
+    return [dict(r) for r in rows]
+
+
+def list_recent_messages(conn: sqlite3.Connection, *, failed_only: bool = False, limit: int = 200) -> list[dict]:
+    sql = "SELECT id, direction, phone, text, message_type, status, last_error, created_at FROM messages"
+    if failed_only:
+        sql += " WHERE status = 'failed'"
+    sql += " ORDER BY id DESC LIMIT ?"
+    return [dict(r) for r in conn.execute(sql, (limit,))]
+
+
+def count_failed_messages_since(conn: sqlite3.Connection, *, hours: int) -> int:
+    cutoff = (datetime.now(UTC) - timedelta(hours=hours)).strftime("%Y-%m-%dT%H:%M:%S")
+    return conn.execute(
+        "SELECT COUNT(*) FROM messages WHERE status = 'failed' AND updated_at >= ?", (cutoff,)
+    ).fetchone()[0]
+
+
+def list_items_for_orders(conn: sqlite3.Connection, order_ids: Sequence[int]) -> list[dict]:
+    """Partidas (producto, cantidad, unidad, kg por bulto) de varios pedidos, para exportar."""
+    if not order_ids:
+        return []
+    rows: list[dict] = []
+    for start in range(0, len(order_ids), 500):  # límite de variables de SQLite
+        chunk = list(order_ids[start:start + 500])
+        rows += [
+            dict(r) for r in conn.execute(
+                f"""SELECT i.order_id, p.sku, p.name, i.quantity, i.unit, p.kg_per_bag
+                      FROM order_items i JOIN products p ON p.id = i.product_id
+                     WHERE i.order_id IN ({','.join('?' * len(chunk))}) ORDER BY i.order_id, i.id""",
+                chunk,
+            )
+        ]
+    return rows

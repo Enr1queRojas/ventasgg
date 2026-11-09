@@ -12,7 +12,7 @@ from contextlib import contextmanager
 from pathlib import Path
 
 SCHEMA_PATH = Path(__file__).with_name("schema.sql")
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 4
 
 # Migraciones para bases existentes: versión de origen -> SQL que la lleva a la siguiente.
 # SQLite no permite modificar un CHECK, así que se reconstruye la tabla.
@@ -33,6 +33,51 @@ MIGRATIONS: dict[int, str] = {
     ALTER TABLE order_items_v2 RENAME TO order_items;
     PRAGMA user_version = 2;
     COMMIT;
+    """,
+    2: """
+    BEGIN;
+    ALTER TABLE messages ADD COLUMN template_payload TEXT
+        CHECK (template_payload IS NULL OR json_valid(template_payload));
+    PRAGMA user_version = 3;
+    COMMIT;
+    """,
+    # Seguimiento de pedidos: estado 'scheduled' y columnas de entrega. Cambia un CHECK, así que
+    # se reconstruye la tabla con las llaves foráneas apagadas (si no, DROP borraría las partidas).
+    3: """
+    PRAGMA foreign_keys = OFF;
+    BEGIN;
+    CREATE TABLE orders_v4 (
+        id              INTEGER PRIMARY KEY,
+        folio           TEXT    UNIQUE,
+        customer_id     INTEGER NOT NULL REFERENCES customers(id),
+        requested_date  TEXT    CHECK (requested_date IS NULL OR date(requested_date) IS requested_date),
+        urgency         TEXT    CHECK (urgency IS NULL OR urgency IN ('normal', 'high', 'critical')),
+        urgency_note    TEXT,
+        notes           TEXT,
+        status          TEXT    NOT NULL DEFAULT 'draft'
+                                CHECK (status IN ('draft', 'awaiting_confirmation', 'pending_sales',
+                                                  'scheduled', 'cancelled', 'closed')),
+        created_at      TEXT    NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+        updated_at      TEXT    NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+        confirmed_at    TEXT,
+        delivery_date   TEXT    CHECK (delivery_date IS NULL OR date(delivery_date) IS delivery_date),
+        sales_note      TEXT,
+        delivered_at    TEXT,
+        cancelled_at    TEXT,
+        CHECK (status NOT IN ('pending_sales', 'scheduled', 'closed')
+               OR (folio IS NOT NULL AND confirmed_at IS NOT NULL
+                   AND requested_date IS NOT NULL AND urgency IS NOT NULL)),
+        CHECK (status <> 'scheduled' OR delivery_date IS NOT NULL)
+    );
+    INSERT INTO orders_v4 (id, folio, customer_id, requested_date, urgency, urgency_note, notes, status,
+                           created_at, updated_at, confirmed_at)
+        SELECT id, folio, customer_id, requested_date, urgency, urgency_note, notes, status,
+               created_at, updated_at, confirmed_at FROM orders;
+    DROP TABLE orders;
+    ALTER TABLE orders_v4 RENAME TO orders;
+    PRAGMA user_version = 4;
+    COMMIT;
+    PRAGMA foreign_keys = ON;
     """,
 }
 
@@ -84,6 +129,8 @@ def init_db(conn: sqlite3.Connection) -> None:
             conn.executescript(MIGRATIONS[version])
             version = conn.execute("PRAGMA user_version").fetchone()[0]
     conn.executescript(SCHEMA_PATH.read_text(encoding="utf-8"))
+    if conn.execute("PRAGMA foreign_key_check").fetchone() is not None:
+        raise RuntimeError("La base tiene referencias rotas (PRAGMA foreign_key_check)")
     version = conn.execute("PRAGMA user_version").fetchone()[0]
     if version != SCHEMA_VERSION:
         raise RuntimeError(f"Versión de esquema inesperada: {version} (se esperaba {SCHEMA_VERSION})")

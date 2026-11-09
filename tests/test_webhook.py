@@ -144,7 +144,8 @@ def _sent_outbound(wa_settings, wamid="wamid.out1"):
     return mid
 
 
-def test_failed_delivery_status_marks_message_failed(client, wa_settings):
+def test_failed_delivery_status_marks_message_failed(client, wa_settings, caplog):
+    caplog.set_level("WARNING", logger="sales_bot.alerts")
     _sent_outbound(wa_settings)
     statuses = [{
         "id": "wamid.out1", "status": "failed", "recipient_id": "523311112222",
@@ -155,6 +156,7 @@ def test_failed_delivery_status_marks_message_failed(client, wa_settings):
     [m] = stored(wa_settings)
     assert m["status"] == "failed"
     assert "131047" in m["last_error"] and "24 hours" in m["last_error"]
+    assert "ALERTA Mensaje no entregado" in caplog.text and "se necesita plantilla" in caplog.text
 
 
 def test_delivered_status_keeps_sent(client, wa_settings):

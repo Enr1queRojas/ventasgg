@@ -44,10 +44,15 @@ class ScriptedAgent:
 class Sender:
     def __init__(self):
         self.sent: list[tuple[str, str]] = []
+        self.templates: list[tuple[str, str, str, list | None]] = []
 
     def send_text(self, to, body):
         self.sent.append((to, body))
         return f"wamid.{len(self.sent)}"
+
+    def send_template(self, to, name, language_code="es_MX", components=None):
+        self.templates.append((to, name, language_code, components))
+        return f"wamid.t{len(self.templates)}"
 
 
 class Chat:
@@ -120,6 +125,57 @@ def test_full_order_in_one_message_then_confirm(chat):
     assert seller_to == "523311112222"
     assert "NUEVO PEDIDO" in seller_text and "Maíz blanco: 30 bultos" in seller_text
     assert "La fecha de entrega aún no está confirmada" in seller_text
+
+
+def test_sales_notification_uses_template_when_configured(conn, customer, products, db_path):
+    """Con SALES_NOTIFICATION_TEMPLATE el aviso al vendedor sale como plantilla (llega fuera de las 24 h)."""
+    settings = Settings(
+        _env_file=None, app_env="test", database_path=db_path, sales_phone=SALES, worker_enabled=False,
+        sales_notification_template="nuevo_pedido_ventas",
+    )
+    chat = Chat(conn, settings)
+    chat.say(
+        "30 bultos de maíz blanco y 200 kilos de amarillo para el martes, me urge",
+        turn(items=[item("maíz blanco", 30, "bultos", "MAIZ-BLANCO"), item("maíz amarillo", 200, "kg", "MAIZ-AMARILLO")],
+             requested_date=future(), urgency="high", urgency_note="ya no tengo\nproducto",
+             notes="Entregar   en\tbodega 2"),
+    )
+    replies = chat.say("Sí", turn(AgentIntent.CONFIRM))
+    order = chat.order()
+
+    assert len(replies) == 1 and order["folio"] in replies[0]  # el cliente sigue recibiendo texto
+    [(to, name, language, components)] = chat.sender.templates
+    assert (to, name, language) == ("523311112222", "nuevo_pedido_ventas", "es_MX")
+    [body] = components
+    params = [p["text"] for p in body["parameters"]]
+    assert body["type"] == "body" and all(p["type"] == "text" for p in body["parameters"])
+    assert params[0] == order["folio"]
+    assert params[1] == "Cliente de prueba"
+    assert params[2] == "+52 55 1234 5678"
+    assert "Maíz blanco: 30 bultos" in params[3] and "; " in params[3]
+    assert params[4] == date.fromisoformat(future()).strftime("%d/%m/%Y")
+    assert params[5] == "Alta (ya no tengo producto)"
+    assert params[6] == "Entregar en bodega 2"
+    assert not any("\n" in p or "\t" in p or "    " in p for p in params)  # Meta rechaza estos caracteres
+
+    row = conn.execute("SELECT * FROM messages WHERE message_type = 'template'").fetchone()
+    assert row["status"] == "sent" and row["order_id"] == order["id"]
+    assert "NUEVO PEDIDO" in row["text"]  # se guarda también la versión legible
+
+
+def test_sales_template_params_fill_empty_values(conn, customer, products, db_path):
+    settings = Settings(
+        _env_file=None, app_env="test", database_path=db_path, sales_phone=SALES, worker_enabled=False,
+        sales_notification_template="nuevo_pedido_ventas", sales_notification_template_language="es",
+    )
+    chat = Chat(conn, settings)
+    chat.say("30 bultos de maíz blanco para el martes",
+             turn(items=[item("maíz blanco", 30, "bultos", "MAIZ-BLANCO")], requested_date=future()))
+    chat.say("Sí", turn(AgentIntent.CONFIRM))
+    [(_, _, language, [body])] = chat.sender.templates
+    assert language == "es"
+    params = [p["text"] for p in body["parameters"]]
+    assert len(params) == 7 and params[5] == "Normal" and params[6] == "-"
 
 
 def test_incomplete_order_asks_only_missing(chat):

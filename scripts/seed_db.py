@@ -1,4 +1,12 @@
-"""Carga o actualiza clientes y productos desde CSV (idempotente: upsert por teléfono / SKU).
+"""Carga clientes y productos desde CSV (idempotente).
+
+Después de la carga inicial, clientes y productos se administran desde el panel /admin (y
+los clientes también por WhatsApp desde el número de ventas). Por eso volver a cargar los
+CSV solo agrega lo nuevo y no pisa cambios hechos en el panel:
+
+- Clientes: solo agrega teléfonos nuevos.
+- Productos: solo agrega códigos nuevos; con --actualizar-productos también sobrescribe los
+  existentes con lo que diga el CSV.
 
 Uso:  python -m scripts.seed_db [--db RUTA] [--customers CSV] [--products CSV]
 
@@ -34,6 +42,7 @@ class SeedError(ValueError):
 class SeedResult:
     inserted: int = 0
     updated: int = 0
+    skipped: int = 0  # clientes que ya estaban en la base (no se modifican)
 
 
 def _bool(value: str | None, *, default: bool = True) -> bool:
@@ -69,18 +78,18 @@ def seed_customers(conn: sqlite3.Connection, path: Path) -> SeedResult:
             if phone in seen:
                 raise ValueError(f"teléfono repetido en el archivo: {phone}")
             seen.add(phone)
-            existed = repository.get_customer_by_phone(conn, phone, active_only=False) is not None
-            repository.upsert_customer(conn, name=name, phone=phone, active=_bool(row.get("active")))
+            active = _bool(row.get("active"))
+            if repository.get_customer_by_phone(conn, phone, active_only=False) is not None:
+                result.skipped += 1
+                continue
+            repository.upsert_customer(conn, name=name, phone=phone, active=active)
         except (ValueError, sqlite3.IntegrityError) as exc:
             raise SeedError(f"{path.name}, línea {line}: {exc}") from exc
-        if existed:
-            result.updated += 1
-        else:
-            result.inserted += 1
+        result.inserted += 1
     return result
 
 
-def seed_products(conn: sqlite3.Connection, path: Path) -> SeedResult:
+def seed_products(conn: sqlite3.Connection, path: Path, *, update_existing: bool = False) -> SeedResult:
     result = SeedResult()
     seen: set[str] = set()
     for line, row in _rows(path):
@@ -93,6 +102,9 @@ def seed_products(conn: sqlite3.Connection, path: Path) -> SeedResult:
             seen.add(sku)
             kg_raw = (row.get("kg_per_bag") or "").strip()
             existed = repository.get_product_by_sku(conn, sku) is not None
+            if existed and not update_existing:
+                result.skipped += 1
+                continue
             repository.upsert_product(
                 conn,
                 sku=sku,
@@ -116,6 +128,10 @@ def main() -> int:
     parser.add_argument("--db", type=Path, help="Ruta del archivo SQLite (por defecto DATABASE_PATH)")
     parser.add_argument("--customers", type=Path, default=SEED_DIR / "customers.csv")
     parser.add_argument("--products", type=Path, default=SEED_DIR / "products.csv")
+    parser.add_argument(
+        "--actualizar-productos", action="store_true",
+        help="Sobrescribe los productos existentes con los datos del CSV (pierde cambios hechos en el panel)",
+    )
     args = parser.parse_args()
 
     db_path = args.db or get_settings().database_path
@@ -124,13 +140,16 @@ def main() -> int:
         try:
             with transaction(conn):
                 customers = seed_customers(conn, args.customers)
-                products = seed_products(conn, args.products)
+                products = seed_products(conn, args.products, update_existing=args.actualizar_productos)
         except SeedError as exc:
             print(f"Error: {exc}. No se guardaron cambios.", file=sys.stderr)
             return 1
 
-    print(f"Clientes: {customers.inserted} nuevos, {customers.updated} actualizados")
-    print(f"Productos: {products.inserted} nuevos, {products.updated} actualizados")
+    print(f"Clientes: {customers.inserted} nuevos, {customers.skipped} ya existían (sin cambios)")
+    print(
+        f"Productos: {products.inserted} nuevos, {products.updated} actualizados, "
+        f"{products.skipped} ya existían (sin cambios)"
+    )
     print(f"Base de datos: {db_path}")
     return 0
 

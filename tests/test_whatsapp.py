@@ -5,7 +5,11 @@ import json
 import httpx
 import pytest
 
-from app.integrations.whatsapp import WhatsAppClient, WhatsAppError, recipient_candidates
+from app.integrations.whatsapp import (
+    WhatsAppClient,
+    WhatsAppError,
+    recipient_candidates,
+)
 
 
 def make_client(handler) -> tuple[WhatsAppClient, list[httpx.Request]]:
@@ -84,3 +88,4 @@ def test_send_template():
     body = json.loads(calls[0].content)
     assert body["type"] == "template"
     assert body["template"] == {"name": "hello_world", "language": {"code": "en_US"}}
+

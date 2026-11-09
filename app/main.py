@@ -9,10 +9,12 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
+from app.api.admin import router as admin_router
 from app.api.webhook import router as webhook_router
 from app.config import Settings, get_settings
 from app.db.database import check_db, init_db, open_db
 from app.integrations.whatsapp import WhatsAppClient, WhatsAppConfigError
+from app.services.alerts import get_alerter
 from app.workers.message_worker import MessageWorker
 
 logger = logging.getLogger("sales_bot")
@@ -54,7 +56,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             whatsapp = WhatsAppClient.from_settings(settings)
         except WhatsAppConfigError as exc:
             logger.warning("%s", exc)
-        worker_task = asyncio.create_task(MessageWorker(settings, whatsapp).run(stop), name="message-worker")
+        worker = MessageWorker(settings, whatsapp, alerter=get_alerter(settings))
+        worker_task = asyncio.create_task(worker.run(stop), name="message-worker")
 
     yield
 
@@ -74,6 +77,18 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app = FastAPI(title="WhatsApp Sales Bot", version="0.1.0", lifespan=lifespan)
     app.state.settings = settings or get_settings()
     app.include_router(webhook_router)
+    app.include_router(admin_router)
+
+    @app.get("/webhook/health", include_in_schema=False)
+    def public_health(request: Request) -> JSONResponse:
+        """Para un monitor externo (UptimeRobot, etc.): el túnel solo publica /webhook*. Sin detalles."""
+        try:
+            with open_db(request.app.state.settings.database_path) as conn:
+                check_db(conn)
+        except Exception:
+            logger.exception("Health check público: la base de datos no responde")
+            return JSONResponse({"status": "error"}, status_code=503)
+        return JSONResponse({"status": "ok"})
 
     @app.get("/health")
     def health(request: Request) -> JSONResponse:

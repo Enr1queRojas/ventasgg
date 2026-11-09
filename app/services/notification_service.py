@@ -1,10 +1,15 @@
 """Textos controlados por el backend (no generados por el LLM) para situaciones sensibles."""
 
+import re
 from dataclasses import dataclass
 from datetime import date
 
 from app.models import Customer, Order, Product, Unit, Urgency
 from app.phone import format_phone_display
+
+# Meta rechaza parámetros de plantilla con saltos de línea, tabuladores o más de 4 espacios seguidos.
+_WHITESPACE = re.compile(r"\s+")
+TEMPLATE_PARAM_MAX = 400  # el cuerpo completo de la plantilla no puede pasar de 1024 caracteres
 
 DELIVERY_NOTICE = "El área de ventas te asignará y confirmará la fecha de entrega."
 
@@ -63,10 +68,6 @@ def unsupported_message_reply() -> str:
     )
 
 
-def sales_number_reply() -> str:
-    return "Este es el número de ventas registrado. Aquí recibirás los avisos de pedidos nuevos."
-
-
 def provisional_customer_reply(customer: Customer) -> str:
     """Respuesta cuando el agente de OpenAI no está configurado."""
     return (
@@ -123,5 +124,36 @@ def sales_notification(folio: str, customer: Customer, order: Order, lines: list
     ]
     if order.notes:
         parts.append(f"Observaciones: {order.notes}")
-    parts += ["", "Estado: PENDIENTE DE VENTAS", "", "La fecha de entrega aún no está confirmada."]
+    parts += [
+        "", "Estado: PENDIENTE DE VENTAS", "", "La fecha de entrega aún no está confirmada.",
+        "Gestiónalo en el panel de administración (Pedidos).",
+    ]
     return "\n".join(parts)
+
+
+def _template_param(value: str | None) -> str:
+    text = _WHITESPACE.sub(" ", value or "").strip()
+    if len(text) > TEMPLATE_PARAM_MAX:
+        text = text[: TEMPLATE_PARAM_MAX - 1].rstrip() + "…"
+    return text or "-"
+
+
+def sales_notification_params(folio: str, customer: Customer, order: Order, lines: list[SummaryLine]) -> list[str]:
+    """Valores {{1}}..{{7}} de la plantilla de aviso al vendedor (ver README, «Aviso al vendedor»).
+
+    Orden: folio, cliente, teléfono, productos, fecha solicitada, urgencia, observaciones.
+    """
+    products = "; ".join(f"{line.product.name}: {format_quantity(line.quantity, line.unit)}" for line in lines)
+    return [
+        _template_param(value)
+        for value in (
+            folio,
+            customer.name,
+            format_phone_display(customer.phone),
+            products,
+            order.requested_date.strftime("%d/%m/%Y") if order.requested_date else None,
+            _urgency(order),
+            order.notes,
+        )
+    ]
+

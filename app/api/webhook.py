@@ -21,6 +21,7 @@ from app.config import Settings
 from app.db import repository
 from app.db.database import open_db, transaction
 from app.models import MessageType
+from app.services.alerts import get_alerter
 
 logger = logging.getLogger("sales_bot.webhook")
 
@@ -146,16 +147,28 @@ def _persist(settings: Settings, messages: list[InboundMessage]) -> int:
 
 
 def _record_statuses(settings: Settings, statuses: list[DeliveryStatus]) -> None:
+    failed: list[tuple[str, str]] = []
     with open_db(settings.database_path) as conn, transaction(conn):
         for st in statuses:
             message_id = repository.find_outbound_by_wamid(conn, st.message_id)
             if message_id is None:
                 continue  # p. ej. mensajes enviados desde el panel de Meta
             if st.status == "failed":
-                repository.mark_delivery_failed(conn, message_id, st.error or "Meta informó fallo de entrega")
+                error = st.error or "Meta informó fallo de entrega"
+                repository.mark_delivery_failed(conn, message_id, error)
                 logger.error("Meta no pudo entregar el mensaje %s: %s", message_id, st.error)
+                phone = conn.execute("SELECT phone FROM messages WHERE id = ?", (message_id,)).fetchone()[0]
+                failed.append((phone, error))
             else:
                 logger.info("Mensaje %s: %s", message_id, st.status)
+    alerter = get_alerter(settings)
+    for phone, error in failed:  # fuera de la transacción: la alerta es una llamada de red
+        hint = " (el destinatario no ha escrito en 24 h: se necesita plantilla)" if "131047" in error else ""
+        alerter.send(
+            f"delivery-failed:{phone}", "Mensaje no entregado",
+            f"Meta no pudo entregar un mensaje a {phone}: {error[:300]}{hint}. Revisa el panel → Mensajes.",
+            cooldown=15 * 60,
+        )
 
 
 # --------------------------------------------------------------------------- routes
