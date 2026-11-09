@@ -22,7 +22,7 @@ El asistente **nunca promete fechas de entrega**: siempre indica que *ventas asi
 
 ## 2. Avisos de pedidos nuevos
 
-Cada pedido confirmado llega al número de ventas (**+52 871 342 7556**) con folio, cliente, teléfono, productos, fecha solicitada, urgencia y observaciones, y el comando para programar la entrega.
+Cada pedido confirmado llega al número de ventas (**+52 871 342 7556**) con folio, cliente, teléfono, productos, fecha solicitada, urgencia y observaciones. La entrega se gestiona en el panel (sección 5).
 
 > Mientras la plantilla de aviso no esté aprobada por Meta, WhatsApp solo entrega el aviso si el número de ventas escribió al número de pedidos en las últimas 24 horas. Basta con mandar cualquier mensaje (por ejemplo «ayuda») una vez al día. Con la plantilla aprobada esto ya no es necesario.
 
@@ -37,24 +37,18 @@ Cada pedido pasa por estos estados:
 | **Entregado** | Pedido cerrado | — |
 | **Cancelado** | No se surtirá | — |
 
-Al programar, reprogramar, marcar entregado o cancelar, **el cliente recibe un WhatsApp automático** con el folio, la fecha y la nota (o el motivo de cancelación). Se puede hacer desde el panel o desde el WhatsApp de ventas.
+Los cambios de estado se hacen **solo en el panel** (sección 5). El sistema **no le envía nada al cliente** al programar, entregar o cancelar: ventas le confirma la entrega por su cuenta.
 
 ## 4. Comandos desde el WhatsApp de ventas
 
-Solo el número de ventas puede usar estos comandos. Se escriben como un mensaje normal al número de pedidos. El número de pedido es el folio sin ceros: `12` = `PED-0012`.
+Solo el número de ventas puede usar estos comandos. Se escriben como un mensaje normal al número de pedidos. Por WhatsApp los pedidos solo se **consultan**; se gestionan en el panel.
 
-**Pedidos**
+**Pedidos** (el número es el folio sin ceros: `12` = `PED-0012`)
 
 | Escribe | Qué pasa |
 |---|---|
-| `pedidos` | Lista los pendientes y las entregas programadas |
+| `pedidos` | Resumen de pendientes y entregas programadas |
 | `pedido 12` | Muestra el detalle del pedido |
-| `programar 12 viernes` | Fija la entrega para el próximo viernes y avisa al cliente |
-| `programar 12 15/11 llega por la tarde` | Igual, con una nota que también recibe el cliente |
-| `entregado 12` | Lo marca como entregado y avisa al cliente |
-| `cancelar 12 sin existencia` | Lo cancela, con el motivo, y avisa al cliente |
-
-Fechas que entiende: `hoy`, `mañana`, `pasado mañana`, un día de la semana (`lunes` … `domingo`, siempre el próximo), `15/11` o `15/11/2026`. Para cambiar una fecha ya programada, vuelve a usar `programar`.
 
 **Clientes**
 
@@ -74,7 +68,7 @@ Fechas que entiende: `hoy`, `mañana`, `pasado mañana`, un día de la semana (`
 
 Desde una computadora con acceso al servidor se abre un panel con usuario y contraseña:
 
-- **Pedidos** (pantalla inicial): pestañas *Pendientes*, *Programados*, *Entregados*, *Cancelados* y *Todos* con el número de pedidos en cada una; búsqueda por folio, cliente o teléfono; filtro por fecha. **Gestionar** abre el pedido para programar la entrega (fecha y nota), marcarlo entregado o cancelarlo, y muestra los mensajes enviados al cliente y si llegaron. La casilla *Avisar al cliente por WhatsApp* viene marcada; desmárcala si ya le avisaste por otro medio.
+- **Pedidos** (pantalla inicial): pestañas *Pendientes*, *Programados*, *Entregados*, *Cancelados* y *Todos* con el número de pedidos en cada una; búsqueda por folio, cliente o teléfono; filtro por fecha. **Gestionar** abre el pedido para programar o reprogramar la entrega (fecha y nota interna), marcarlo entregado o cancelarlo (con motivo opcional). Estos cambios no le envían nada al cliente.
 - **Exportar a Excel:** botón en *Pedidos*; descarga los pedidos del filtro actual en dos hojas: *Pedidos* (uno por fila) y *Partidas* (un producto por fila, con kilos equivalentes).
 - **Clientes:** agregar, corregir nombres, activar/desactivar y buscar.
 - **Productos:** agregar, editar y activar/desactivar productos (sección 6).
@@ -100,8 +94,7 @@ Se administra en el panel → **Productos**:
 | No llegan avisos de pedidos a ventas | Que la plantilla esté aprobada, o que ventas haya escrito en las últimas 24 h. En el panel → Mensajes aparece el motivo |
 | El bot no contesta a nadie | Avisar al administrador técnico (puede ser el servidor, el token de Meta o la app de Meta) |
 | El bot entendió mal un pedido | El cliente puede corregirlo antes de decir «sí» («no, eran 50 bultos») o escribir «cancelar» para empezar de nuevo |
-| Un cliente no recibió el aviso de su entrega | Panel → el pedido → *Mensajes del pedido* muestra si se envió o el motivo del fallo |
-| Me equivoqué de fecha al programar | Vuelve a programar con la fecha correcta; el cliente recibe el aviso de reprogramación |
+| Me equivoqué de fecha al programar | Abre el pedido en el panel y guarda la fecha correcta (queda como reprogramado) |
 
 ## 8. Respaldos, alertas y datos
 

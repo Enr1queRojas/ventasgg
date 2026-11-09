@@ -9,8 +9,8 @@ Estado al 9/11/2026. El flujo completo funciona en producción: un cliente regis
 | Número de WhatsApp | +52 871 233 3190 registrado en Cloud API (cuenta *RGC dev*), conectado a la app *proadel-ventas*, método de pago activo |
 | Webhook | `https://ventas.proadel.app/webhook/whatsapp`, firma `X-Hub-Signature-256` verificada |
 | Pedidos | Interpretación con OpenAI, validación contra catálogo, confirmación explícita, folio, aviso a ventas |
-| Seguimiento | Ventas programa/reprograma la entrega, marca entregado o cancela (panel o WhatsApp) y el cliente recibe el aviso |
-| Avisos con plantilla | `nuevo_pedido_ventas` (a ventas) y `actualizacion_pedido` (al cliente) enviadas a Meta; se activan con `SALES_NOTIFICATION_TEMPLATE` y `ORDER_UPDATE_TEMPLATE` |
+| Seguimiento | Ventas programa/reprograma la entrega, marca entregado o cancela en el panel (sin mensajes al cliente); por WhatsApp solo consulta el resumen de pedidos |
+| Aviso a ventas con plantilla | `nuevo_pedido_ventas` enviada a Meta; se activa con `SALES_NOTIFICATION_TEMPLATE` |
 | Clientes | Alta/baja/búsqueda por WhatsApp desde el número de ventas y en el panel |
 | Panel `/admin` | Pedidos (gestión + exportación a Excel), clientes, catálogo editable y mensajes fallidos; usuario y contraseña; no expuesto a internet |
 | Alertas | Envíos fallidos, token de WhatsApp, errores de procesamiento, caída del servicio o del túnel y respaldos fallidos → ntfy/Slack/Discord |
@@ -25,7 +25,7 @@ Estado al 9/11/2026. El flujo completo funciona en producción: un cliente regis
 | # | Tarea | Responsable | Notas |
 |---|---|---|---|
 | 1 | **Publicar la app *proadel-ventas* en Meta** | Nosotros | Sin esto solo llegan mensajes de administradores/testers de la app; los clientes reales no reciben respuesta. Requiere URL de política de privacidad, ícono y categoría |
-| 2 | Aprobación de las plantillas `nuevo_pedido_ventas` y `actualizacion_pedido` | Meta | Enviadas el 9/11. Al aprobarse: `SALES_NOTIFICATION_TEMPLATE=nuevo_pedido_ventas` y `ORDER_UPDATE_TEMPLATE=actualizacion_pedido` en `.env` y `docker compose up -d` |
+| 2 | Aprobación de la plantilla `nuevo_pedido_ventas` | Meta | Enviada el 9/11. Al aprobarse: `SALES_NOTIFICATION_TEMPLATE=nuevo_pedido_ventas` en `.env` y `docker compose up -d` |
 | 3 | Aprobación del nombre visible «Graneros Guerra» | Meta | Revisar en WhatsApp Manager. Si lo rechazan, ajustar al nombre legal o comercial |
 | 4 | Fusionar `claude/kind-rubin-jefe7w` en `main` y desplegar con `deploy/deploy.sh` | Nosotros | La migración v4 de la base se aplica sola al arrancar (el despliegue respalda antes) |
 | 5 | Configurar en la VM: `ADMIN_PASSWORD`, `ALERT_WEBHOOK_URL`, `WATCHDOG_PUBLIC_URL`, rclone + `BACKUP_REMOTE`, cron de respaldo y watchdog, monitor externo de `/webhook/health` | Nosotros | Pasos en el README («Primera vez», «Respaldo fuera de la VM», «Alertas») |
@@ -36,8 +36,8 @@ Estado al 9/11/2026. El flujo completo funciona en producción: un cliente regis
 ## 3. Decisiones pendientes con el cliente
 
 - **Propiedad de la cuenta de Meta.** El número vive en el portafolio *RGC dev* (nuestro). Para entregar, conviene que la cuenta de WhatsApp quede en un portafolio del cliente (o compartirla como socio), con su método de pago. Decidir antes de que el número tenga historial.
-- **Verificación del negocio en Meta.** Sin verificar, WhatsApp limita cuántas conversaciones con plantilla inicia el negocio por día. Con los avisos de seguimiento a clientes conviene verificar para no toparse con el límite.
-- **Costos recurrentes.** OpenAI (por mensaje interpretado), plantillas de WhatsApp (avisos a ventas y a clientes) y la VM. Acordar quién los paga.
+- **Verificación del negocio en Meta.** Sin verificar, WhatsApp limita cuántas conversaciones con plantilla inicia el negocio por día. Para los avisos a un solo vendedor alcanza; conviene verificar de todos modos.
+- **Costos recurrentes.** OpenAI (por mensaje interpretado), plantillas de WhatsApp (avisos a ventas) y la VM. Acordar quién los paga.
 - **Aviso de privacidad.** Publicar uno (se necesita para publicar la app y por la LFPDPPP) y acordar cuánto tiempo se guardan las conversaciones.
 
 ## 4. Mejoras posibles (siguiente etapa)
@@ -56,10 +56,10 @@ Estado al 9/11/2026. El flujo completo funciona en producción: un cliente regis
 2. Desde el número de ventas: `alta Prueba Cliente <número>` → confirma el alta.
 3. Desde ese número: pedido completo en un mensaje («30 bultos de maíz blanco para el viernes») → resumen.
 4. Corregir antes de confirmar («mejor 40») → resumen actualizado.
-5. Responder «sí» → folio y aviso de que ventas confirmará la entrega; el aviso llega al número de ventas con el comando para programar.
-6. Desde ventas: `programar <n> mañana llega por la tarde` → el cliente recibe la fecha y la nota.
-7. En el panel: el pedido aparece en *Programados*; reprogramarlo → el cliente recibe la nueva fecha.
-8. Marcar entregado desde el panel → el cliente recibe el aviso; el pedido pasa a *Entregados*.
+5. Responder «sí» → folio y aviso de que ventas confirmará la entrega; el aviso llega al número de ventas.
+6. Desde ventas: `pedidos` → aparece en el resumen como pendiente; `pedido <n>` muestra el detalle.
+7. En el panel: programar la entrega → pasa a *Programados*; reprogramarla → cambia la fecha. El cliente no recibe mensajes.
+8. Marcar entregado desde el panel → el pedido pasa a *Entregados*.
 9. Exportar a Excel desde *Pedidos* → el archivo abre con las hojas *Pedidos* y *Partidas*.
 10. Pedido incompleto («quiero frijol») → pregunta cuál frijol, cantidad y fecha.
 11. Enviar un audio → pide el pedido por escrito.

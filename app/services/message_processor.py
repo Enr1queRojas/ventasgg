@@ -24,7 +24,6 @@ from app.services.order_service import (
     TurnApplier,
     summarize_order_for_agent,
 )
-from app.services.order_tracking import NotifyConfig
 
 logger = logging.getLogger("sales_bot.processor")
 
@@ -56,14 +55,6 @@ def _history(conn: sqlite3.Connection, message: Message) -> list[tuple[str, str]
     ][-HISTORY_LIMIT:]
 
 
-def notify_config(settings: Settings) -> NotifyConfig:
-    return NotifyConfig(
-        sales_phone=settings.sales_phone,
-        template=settings.order_update_template,
-        template_language=settings.order_update_template_language,
-    )
-
-
 def process_message(
     conn: sqlite3.Connection, settings: Settings, message: Message, agent: Agent | None | object = _DEFAULT
 ) -> list[Reply] | CommitStep:
@@ -76,13 +67,9 @@ def process_message(
     if settings.sales_phone and phone == settings.sales_phone:
         command = admin_commands.parse_command(message.text)
 
-        context = admin_commands.AdminContext(
-            today=datetime.now(settings.timezone).date(), notify=notify_config(settings)
-        )
-
         def run_admin_command(tx_conn: sqlite3.Connection) -> list[Reply]:
-            result = admin_commands.execute(tx_conn, command, context)
-            return [Reply(message.phone, result.text), *result.outgoing]
+            text = admin_commands.execute(tx_conn, command, sales_phone=settings.sales_phone)
+            return [Reply(message.phone, text)]
 
         return run_admin_command
 

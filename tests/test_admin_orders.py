@@ -70,52 +70,44 @@ def test_detail_page(client, conn, customer, products):
     assert client.get("/admin/pedidos/999", auth=AUTH).status_code == 404
 
 
-def test_schedule_from_panel_notifies(client, conn, customer, products):
+def test_schedule_from_panel_does_not_message_customer(client, conn, customer, products):
     order = registered(conn, customer, products[0])
     delivery = local_today() + timedelta(days=3)
-    page = post(client, f"/admin/pedidos/{order.id}/programar", fecha=delivery.isoformat(), nota="por la tarde", avisar="1")
-    assert "programado" in page.text and "Se envió el aviso al cliente" in page.text
+    page = post(client, f"/admin/pedidos/{order.id}/programar", fecha=delivery.isoformat(), nota="por la tarde")
+    assert "programado" in page.text and "aviso" not in page.text and "Avisar al cliente" not in page.text
     updated = repository.get_order(conn, order.id)
     assert updated.status is OrderStatus.SCHEDULED and updated.delivery_date == delivery
-    [msg] = outbound(conn)
-    assert msg["phone"] == customer.phone and msg["order_id"] == order.id and "por la tarde" in msg["text"]
-    assert "Reprogramar entrega" in page.text and "Al cliente" in page.text  # mensaje visible en el detalle
-
-
-def test_schedule_without_notice(client, conn, customer, products):
-    order = registered(conn, customer, products[0])
-    post(client, f"/admin/pedidos/{order.id}/programar", fecha=(local_today() + timedelta(days=1)).isoformat())
-    assert repository.get_order(conn, order.id).status is OrderStatus.SCHEDULED
+    assert updated.sales_note == "por la tarde"
     assert outbound(conn) == []
+    assert "Reprogramar entrega" in page.text
 
 
 @pytest.mark.parametrize("fecha", ["", "2020-01-01", "no-es-fecha"])
 def test_schedule_invalid_date(client, conn, customer, products, fecha):
     order = registered(conn, customer, products[0])
-    page = post(client, f"/admin/pedidos/{order.id}/programar", fecha=fecha, avisar="1")
+    page = post(client, f"/admin/pedidos/{order.id}/programar", fecha=fecha)
     assert "flash err" in page.text
     assert repository.get_order(conn, order.id).status is OrderStatus.PENDING_SALES and outbound(conn) == []
 
 
 def test_deliver_and_cancel(client, conn, customer, products):
     order = registered(conn, customer, products[0])
-    page = post(client, f"/admin/pedidos/{order.id}/entregado", avisar="1")
+    page = post(client, f"/admin/pedidos/{order.id}/entregado")
     assert "entregado" in page.text and "ya está cerrado" in page.text
     assert repository.get_order(conn, order.id).status is OrderStatus.CLOSED
-    page = post(client, f"/admin/pedidos/{order.id}/cancelar", motivo="x", avisar="1")
+    page = post(client, f"/admin/pedidos/{order.id}/cancelar", motivo="x")
     assert "ya fue entregado" in page.text
-    assert len(outbound(conn)) == 1
 
     other = repository.upsert_customer(conn, name="Ana", phone="+52 871 765 4321")
     second = registered(conn, other, products[0])
-    post(client, f"/admin/pedidos/{second.id}/cancelar", motivo="sin existencia", avisar="1")
+    post(client, f"/admin/pedidos/{second.id}/cancelar", motivo="sin existencia")
     cancelled = repository.get_order(conn, second.id)
     assert cancelled.status is OrderStatus.CANCELLED and cancelled.sales_note == "sin existencia"
-    assert "Motivo: sin existencia" in outbound(conn)[-1]["text"]
+    assert outbound(conn) == []
 
 
 def test_actions_require_csrf(client, conn, customer, products):
     order = registered(conn, customer, products[0])
-    r = client.post(f"/admin/pedidos/{order.id}/entregado", auth=AUTH, data={"avisar": "1"})
+    r = client.post(f"/admin/pedidos/{order.id}/entregado", auth=AUTH, data={})
     assert r.status_code == 403
     assert repository.get_order(conn, order.id).status is OrderStatus.PENDING_SALES

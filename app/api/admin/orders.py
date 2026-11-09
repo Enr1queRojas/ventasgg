@@ -1,7 +1,8 @@
 """Panel: gestión de pedidos por el asesor de ventas.
 
 Lista con filtros y detalle de cada pedido con las acciones de seguimiento: programar
-(o reprogramar) la entrega, marcar entregado y cancelar, avisando al cliente por WhatsApp.
+(o reprogramar) la entrega, marcar entregado y cancelar. No se envía nada al cliente:
+ventas le confirma por su cuenta.
 """
 
 from datetime import date, datetime
@@ -29,9 +30,7 @@ from app.db.database import open_db, transaction
 from app.models import OrderStatus
 from app.phone import InvalidPhoneError, format_phone_display, normalize_phone
 from app.services import order_tracking
-from app.services.message_processor import notify_config
 from app.services.order_export import build_orders_workbook
-from app.workers.message_worker import enqueue_replies
 
 FILTERS = (
     ("pendientes", "Pendientes", (OrderStatus.PENDING_SALES,)),
@@ -165,7 +164,7 @@ def order_detail_page(order_id: int, settings: Admin, msg: str = "", err: str = 
         ("Observaciones del cliente", escape(order.notes or "—")),
         ("Estado", _state(order.status.value)),
         ("Entrega programada", _short(info["delivery_date"]) if order.delivery_date else "—"),
-        ("Nota de ventas", escape(order.sales_note or "—")),
+        ("Nota interna / motivo", escape(order.sales_note or "—")),
         ("Registrado", fmt_date(order.confirmed_at, tz)),
     ]
     if order.delivered_at:
@@ -174,7 +173,6 @@ def order_detail_page(order_id: int, settings: Admin, msg: str = "", err: str = 
         facts.append(("Cancelado", fmt_date(order.cancelled_at, tz)))
     facts_html = "".join(f"<dt>{k}</dt><dd>{v}</dd>" for k, v in facts)
 
-    notify = '<label class="check"><input type="checkbox" name="avisar" value="1" checked> Avisar al cliente por WhatsApp</label>'
     if open_order:
         current = order.delivery_date.isoformat() if order.delivery_date else (
             order.requested_date.isoformat() if order.requested_date and order.requested_date.isoformat() >= today else today
@@ -184,16 +182,16 @@ def order_detail_page(order_id: int, settings: Admin, msg: str = "", err: str = 
 <form method="post" action="/admin/pedidos/{order.id}/programar" class="row">
 <input type="hidden" name="csrf" value="{token}">
 <div><label for="f">Fecha de entrega</label><input id="f" type="date" name="fecha" value="{current}" min="{today}" required></div>
-<div class="grow"><label for="n">Nota para el cliente (opcional)</label>
+<div class="grow"><label for="n">Nota interna (opcional)</label>
 <input id="n" name="nota" maxlength="300" placeholder="Ej. llega por la tarde" value="{escape(order.sales_note or '')}"></div>
-{notify}<button class="primary">Guardar fecha</button></form></div>
+<button class="primary">Guardar fecha</button></form></div>
 <div class="card two"><form method="post" action="/admin/pedidos/{order.id}/entregado">
-<h2>Marcar como entregado</h2><input type="hidden" name="csrf" value="{token}">{notify}
+<h2>Marcar como entregado</h2><input type="hidden" name="csrf" value="{token}">
 <button class="primary">Pedido entregado</button></form>
 <form method="post" action="/admin/pedidos/{order.id}/cancelar">
 <h2>Cancelar pedido</h2><input type="hidden" name="csrf" value="{token}">
-<label for="m">Motivo (se envía al cliente)</label><input id="m" name="motivo" maxlength="300" placeholder="Ej. sin existencia">
-{notify}<button class="danger">Cancelar pedido</button></form></div>"""
+<label for="m">Motivo (opcional)</label><input id="m" name="motivo" maxlength="300" placeholder="Ej. sin existencia">
+<button class="danger">Cancelar pedido</button></form></div>"""
     else:
         actions = '<div class="card muted">Este pedido ya está cerrado; no admite cambios.</div>'
 
@@ -236,37 +234,32 @@ def _message_row(m, settings: Settings) -> str:
 
 async def _apply(order_id: int, request: Request, settings: Settings, action) -> RedirectResponse:
     form = await read_form(request, settings)
-    notify = form.get("avisar") == "1"
     today = datetime.now(settings.timezone).date()
-    config = notify_config(settings)
 
     def run() -> order_tracking.ActionResult:
         with open_db(settings.database_path) as conn, transaction(conn):
             order = repository.get_order(conn, order_id)
             if order is None or order.folio is None:
                 raise order_tracking.OrderActionError("El pedido no existe.")
-            result = action(conn, order, form, today=today, notify=notify, config=config)
-            enqueue_replies(conn, result.outgoing)
-            return result
+            return action(conn, order, form, today=today)
 
     path = f"/admin/pedidos/{order_id}"
     try:
         result = await run_in_threadpool(run)
     except order_tracking.OrderActionError as exc:
         return redirect(path, err=str(exc))
-    suffix = " Se envió el aviso al cliente." if result.outgoing else ""
-    return redirect(path, msg=result.summary + suffix)
+    return redirect(path, msg=result.summary)
 
 
 @router.post("/pedidos/{order_id:int}/programar", include_in_schema=False)
 async def schedule(order_id: int, request: Request, settings: Admin) -> RedirectResponse:
-    def action(conn, order, form, *, today, notify, config):
+    def action(conn, order, form, *, today):
         try:
             delivery = date.fromisoformat(form.get("fecha", ""))
         except ValueError:
             raise order_tracking.OrderActionError("Fecha de entrega inválida.") from None
         return order_tracking.schedule_delivery(
-            conn, order, delivery, form.get("nota"), today=today, notify=notify, config=config
+            conn, order, delivery, form.get("nota"), today=today
         )
 
     return await _apply(order_id, request, settings, action)
@@ -274,15 +267,15 @@ async def schedule(order_id: int, request: Request, settings: Admin) -> Redirect
 
 @router.post("/pedidos/{order_id:int}/entregado", include_in_schema=False)
 async def delivered(order_id: int, request: Request, settings: Admin) -> RedirectResponse:
-    def action(conn, order, form, *, today, notify, config):
-        return order_tracking.mark_delivered(conn, order, notify=notify, config=config)
+    def action(conn, order, form, *, today):
+        return order_tracking.mark_delivered(conn, order)
 
     return await _apply(order_id, request, settings, action)
 
 
 @router.post("/pedidos/{order_id:int}/cancelar", include_in_schema=False)
 async def cancel(order_id: int, request: Request, settings: Admin) -> RedirectResponse:
-    def action(conn, order, form, *, today, notify, config):
-        return order_tracking.cancel_order(conn, order, form.get("motivo"), notify=notify, config=config)
+    def action(conn, order, form, *, today):
+        return order_tracking.cancel_order(conn, order, form.get("motivo"))
 
     return await _apply(order_id, request, settings, action)

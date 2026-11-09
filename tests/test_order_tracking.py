@@ -9,7 +9,6 @@ from app.config import Settings
 from app.db import repository
 from app.models import MessageType, OrderStatus, Unit
 from app.services import order_tracking
-from app.services.admin_commands import parse_delivery_date
 from app.workers.message_worker import MessageWorker
 
 SALES_PHONE = "+52 33 1111 2222"
@@ -76,98 +75,18 @@ def sales(make_sales):
     return make_sales()
 
 
-# ------------------------------------------------------------------ fechas
-
-TODAY = date(2026, 11, 9)  # lunes
-
-
-@pytest.mark.parametrize(
-    ("text", "expected", "rest"),
-    [
-        ("hoy", date(2026, 11, 9), ""),
-        ("mañana en la tarde", date(2026, 11, 10), "en la tarde"),
-        ("pasado mañana", date(2026, 11, 11), ""),
-        ("viernes", date(2026, 11, 13), ""),
-        ("el miércoles temprano", date(2026, 11, 11), "temprano"),
-        ("lunes", date(2026, 11, 16), ""),  # el próximo, no hoy
-        ("15/11", date(2026, 11, 15), ""),
-        ("5/1", date(2027, 1, 5), ""),  # ya pasó este año -> el siguiente
-        ("15/11/2026 bodega 2", date(2026, 11, 15), "bodega 2"),
-        ("15-11-26", date(2026, 11, 15), ""),
-        ("2026-12-01", date(2026, 12, 1), ""),
-    ],
-)
-def test_parse_delivery_date(text, expected, rest):
-    assert parse_delivery_date(text, TODAY) == (expected, rest)
-
-
-@pytest.mark.parametrize("text", ["", "pronto", "31/02", "32/11"])
-def test_parse_delivery_date_invalid(text):
-    assert parse_delivery_date(text, TODAY) is None
-
-
 @pytest.mark.parametrize(("ref", "folio"), [("PED-0012", "PED-0012"), ("ped 12", "PED-0012"), ("#12", "PED-0012"), ("12", "PED-0012"), ("0012", "PED-0012")])
 def test_parse_folio(ref, folio):
     assert order_tracking.parse_folio(ref) == folio
 
 
-# ------------------------------------------------------------------ WhatsApp
-
-
-def test_programar_notifies_customer(conn, customer, products, sales):
-    order = registered_order(conn, customer, products)
-    replies = sales(f"programar {order.id} mañana llega en la tarde")
-    delivery = local_today() + timedelta(days=1)
-    assert replies[0][0] == SALES_WA_ID and "programado" in replies[0][1] and "Se avisó al cliente" in replies[0][1]
-    to, text = replies[1]
-    assert to == CUSTOMER_PHONE
-    assert order.folio in text and delivery.strftime("%d/%m/%Y") in text and "Nota de ventas: llega en la tarde" in text
-    updated = repository.get_order(conn, order.id)
-    assert updated.status is OrderStatus.SCHEDULED and updated.delivery_date == delivery
-    assert updated.sales_note == "llega en la tarde"
-
-    # reprogramar
-    replies = sales(f"confirmar PED-{order.id:04d} 2099-01-15")
-    assert "reprogramado" in replies[0][1] and "se reprogramó" in replies[1][1]
-
-
-def test_entregado_and_cannot_change_after(conn, customer, products, sales):
-    order = registered_order(conn, customer, products)
-    replies = sales(f"entregado {order.id}")
-    assert "entregado" in replies[0][1] and "Gracias por tu compra" in replies[1][1]
-    updated = repository.get_order(conn, order.id)
-    assert updated.status is OrderStatus.CLOSED and updated.delivered_at is not None
-    [reply] = sales(f"cancelar {order.id}")
-    assert "ya fue entregado" in reply[1]
-
-
-def test_cancelar_with_reason(conn, customer, products, sales):
-    order = registered_order(conn, customer, products)
-    replies = sales(f"cancelar {order.id} sin existencia de maíz")
-    assert "cancelado" in replies[0][1]
-    assert "Motivo: sin existencia de maíz" in replies[1][1] and "+52 33 1111 2222" in replies[1][1]
-    updated = repository.get_order(conn, order.id)
-    assert updated.status is OrderStatus.CANCELLED and updated.sales_note == "sin existencia de maíz"
-    [reply] = sales(f"programar {order.id} mañana")
-    assert "está cancelado" in reply[1]
-
-
-@pytest.mark.parametrize(
-    ("text", "fragment"),
-    [("programar", "Escribe: *programar*"), ("programar 999 mañana", "No encontré el pedido"),
-     ("programar {id} pronto", "No entendí la fecha"), ("programar {id} 01/01/2020", "ya pasó"),
-     ("entregado abc", "No encontré el pedido")],
-)
-def test_order_command_errors(conn, customer, products, sales, text, fragment):
-    order = registered_order(conn, customer, products)
-    [reply] = sales(text.format(id=order.id))
-    assert fragment in reply[1]
-    assert repository.get_order(conn, order.id).status is OrderStatus.PENDING_SALES
+# ------------------------------------------------------------------ WhatsApp (solo consulta)
 
 
 def test_pedidos_and_detail(conn, customer, products, sales):
     first = registered_order(conn, customer, products)
-    sales(f"programar {first.id} mañana")
+    repository.transition_order(conn, first.id, from_statuses=["pending_sales"], status="scheduled",
+                                delivery_date=(local_today() + timedelta(days=1)).isoformat())
     other = repository.upsert_customer(conn, name="Ana López", phone="+52 871 765 4321")
     pending = registered_order(conn, other, products)
     [listing] = sales("pedidos")
@@ -176,16 +95,41 @@ def test_pedidos_and_detail(conn, customer, products, sales):
     [detail] = sales(f"pedido {first.id}")
     assert "Entrega programada" in detail[1] and "Maíz blanco: 30 bultos" in detail[1]
     assert "Urgencia: Alta" in detail[1]
+    [missing] = sales("pedido 999")
+    assert "No encontré el pedido" in missing[1]
 
 
-def test_customer_notice_uses_template_when_configured(conn, customer, products, make_sales):
-    sales = make_sales(order_update_template="actualizacion_pedido")
+@pytest.mark.parametrize("text", ["programar {id} mañana", "entregado {id}", "cancelar {id} sin existencia"])
+def test_sales_cannot_change_orders_by_whatsapp(conn, customer, products, sales, text):
+    """Los cambios de pedido solo se hacen en el panel: por WhatsApp responde la ayuda y nada cambia."""
     order = registered_order(conn, customer, products)
-    replies = sales(f"entregado {order.id}")
-    assert len(replies) == 1  # a ventas en texto; al cliente, plantilla
-    [(to, name, language, [body])] = sales.sender.templates
-    assert (to, name, language) == (CUSTOMER_PHONE, "actualizacion_pedido", "es_MX")
-    params = [p["text"] for p in body["parameters"]]
-    assert params == ["Cliente de prueba", order.folio, "pedido entregado, gracias por tu compra"]
-    row = conn.execute("SELECT * FROM messages WHERE message_type = 'template'").fetchone()
-    assert row["order_id"] == order.id and "entregado" in row["text"]
+    replies = sales(text.format(id=order.id))
+    assert len(replies) == 1 and replies[0][0] == SALES_WA_ID  # nada al cliente
+    assert "usa el panel de administración" in replies[0][1]
+    assert repository.get_order(conn, order.id).status is OrderStatus.PENDING_SALES
+
+
+def test_no_pedidos(sales):
+    [reply] = sales("pedidos")
+    assert "No hay pedidos pendientes" in reply[1]
+
+
+# ------------------------------------------------------------------ servicio
+
+
+def test_service_transitions_never_enqueue_messages(conn, customer, products):
+    today = local_today()
+    order = registered_order(conn, customer, products)
+    result = order_tracking.schedule_delivery(conn, order, today + timedelta(days=2), "  por   la tarde ", today=today)
+    assert result.order.status is OrderStatus.SCHEDULED and result.order.sales_note == "por la tarde"
+    assert "programado" in result.summary
+    again = order_tracking.schedule_delivery(conn, result.order, today + timedelta(days=3), None, today=today)
+    assert "reprogramado" in again.summary
+    done = order_tracking.mark_delivered(conn, again.order)
+    assert done.order.status is OrderStatus.CLOSED and done.order.delivered_at
+    with pytest.raises(order_tracking.OrderActionError, match="ya fue entregado"):
+        order_tracking.cancel_order(conn, done.order, "x")
+    with pytest.raises(order_tracking.OrderActionError, match="ya pasó"):
+        order_tracking.schedule_delivery(conn, registered_order(conn, repository.upsert_customer(
+            conn, name="B", phone="+52 871 111 2233"), products), today - timedelta(days=1), None, today=today)
+    assert conn.execute("SELECT COUNT(*) FROM messages").fetchone()[0] == 0

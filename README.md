@@ -2,7 +2,7 @@
 
 Backend (FastAPI + SQLite) que recibe pedidos por WhatsApp, los valida contra un catálogo local y los registra para que el área de ventas asigne y confirme la fecha de entrega. La arquitectura completa está en el plan de arquitectura (v1.0).
 
-**Estado actual:** en producción en la VM (`ventas.proadel.app`). Webhook de Meta, agente OpenAI (Responses API + Structured Outputs), motor de pedidos con confirmación y folio, aviso al vendedor (texto o [plantilla](#aviso-al-vendedor-plantilla)), [seguimiento de pedidos](#seguimiento-de-pedidos) con aviso al cliente, [comandos de ventas](#comandos-de-ventas-por-whatsapp) y [panel `/admin`](#panel-web-admin) (pedidos, clientes, catálogo, exportación a Excel, mensajes), worker con reintentos, [alertas](#alertas), respaldos locales y [fuera de la VM](#respaldo-fuera-de-la-vm) y script de despliegue.
+**Estado actual:** en producción en la VM (`ventas.proadel.app`). Webhook de Meta, agente OpenAI (Responses API + Structured Outputs), motor de pedidos con confirmación y folio, aviso al vendedor (texto o [plantilla](#aviso-al-vendedor-plantilla)), [seguimiento de pedidos](#seguimiento-de-pedidos) en el panel, [comandos de ventas](#comandos-de-ventas-por-whatsapp) y [panel `/admin`](#panel-web-admin) (pedidos, clientes, catálogo, exportación a Excel, mensajes), worker con reintentos, [alertas](#alertas), respaldos locales y [fuera de la VM](#respaldo-fuera-de-la-vm) y script de despliegue.
 
 Documentos:
 
@@ -14,7 +14,7 @@ Documentos:
 | Remitente / mensaje | Respuesta |
 |---|---|
 | Número no registrado | Mensaje fijo con el teléfono de ventas (`SALES_PHONE`) |
-| `SALES_PHONE` | Fuera del flujo de pedidos; administra clientes y da seguimiento a pedidos con comandos (ver [Comandos de ventas](#comandos-de-ventas-por-whatsapp)) |
+| `SALES_PHONE` | Fuera del flujo de pedidos; da de alta clientes y consulta pedidos con comandos (ver [Comandos de ventas](#comandos-de-ventas-por-whatsapp)) |
 | Audio, foto, documento | Pide el pedido por texto |
 | Cliente registrado | El modelo (`OPENAI_MODEL`) interpreta; Python valida contra el catálogo, actualiza el borrador, pregunta lo que falta y, con el pedido completo, muestra un resumen. Solo un "sí" al resumen vigente registra el pedido (`pending_sales`, folio `PED-0001`) y avisa al vendedor |
 
@@ -129,8 +129,6 @@ Variables en `.env` (nunca se versiona ni entra en la imagen Docker). Con `APP_E
 | `SALES_PHONE` | ✔ | `+52 33 1234 5678` |
 | `SALES_NOTIFICATION_TEMPLATE` | | Nombre (no el texto) de la plantilla aprobada para avisar al vendedor, p. ej. `nuevo_pedido_ventas`. Vacía: el aviso va como texto libre |
 | `SALES_NOTIFICATION_TEMPLATE_LANGUAGE` | | Idioma con el que se aprobó la plantilla. `es_MX` por defecto |
-| `ORDER_UPDATE_TEMPLATE` | | Plantilla aprobada para avisar al cliente cambios de su pedido, p. ej. `actualizacion_pedido` (ver [Seguimiento de pedidos](#seguimiento-de-pedidos)). Vacía: texto libre |
-| `ORDER_UPDATE_TEMPLATE_LANGUAGE` | | `es_MX` por defecto |
 | `ALERT_WEBHOOK_URL` | | Destino de las alertas: `https://ntfy.sh/<tema>`, webhook de Slack o de Discord (ver [Alertas](#alertas)). Vacía: solo log |
 | `WHATSAPP_CHECK_INTERVAL` | | Cada cuántos segundos se valida el token con Meta. `1800` por defecto; `0` solo al arrancar |
 | `WATCHDOG_PUBLIC_URL` | | Para `deploy/watchdog.sh`: `https://ventas.proadel.app/webhook/health` |
@@ -270,23 +268,11 @@ Los clientes viven en la base de datos (`customers.csv` solo sirve para la carga
 | Entregado | Pedido cerrado |
 | Cancelado | Cancelado por el cliente antes de confirmar, o por ventas después |
 
-Ventas programa, marca entregado o cancela desde el panel (*Pedidos → Gestionar*) o por WhatsApp; el cliente recibe el aviso por WhatsApp (en el panel se puede desmarcar «Avisar al cliente»). El cambio de estado y el aviso se guardan en la misma transacción.
-
-Como el aviso puede llegar días después del último mensaje del cliente, conviene enviarlo con plantilla (`ORDER_UPDATE_TEMPLATE`); sin ella va como texto libre y WhatsApp solo lo entrega si el cliente escribió en las últimas 24 h. Plantilla esperada (categoría **Utility**, `es_MX`, enviada a Meta como `actualizacion_pedido`):
-
-```text
-Encabezado: Actualización de tu pedido
-Cuerpo:
-Hola {{1}}, hay una actualización de tu pedido {{2}}: {{3}}.
-
-Si tienes dudas, responde a este mensaje.
-```
-
-`{{1}}` nombre del cliente, `{{2}}` folio, `{{3}}` detalle («entrega programada para el miércoles 11/11/2026 (llega por la tarde)», «pedido entregado, gracias por tu compra» o «pedido cancelado por el área de ventas (sin existencia)»).
+Ventas programa (o reprograma) la entrega, marca entregado o cancela **solo desde el panel** (*Pedidos → Gestionar*), con una nota interna o motivo opcional. **No se envía nada al cliente**: ventas le confirma la entrega por su cuenta. Por WhatsApp, el número de ventas solo consulta pedidos.
 
 ## Comandos de ventas por WhatsApp
 
-Solo los acepta el número `SALES_PHONE` (si un cliente escribe «alta …» o «cancelar …», entra al flujo normal de pedidos). Se interpretan con reglas fijas, sin OpenAI.
+Solo los acepta el número `SALES_PHONE` (si un cliente escribe «alta …», entra al flujo normal de pedidos). Se interpretan con reglas fijas, sin OpenAI. Los pedidos solo se **consultan** por aquí; se gestionan en el panel.
 
 | Mensaje | Qué hace |
 |---|---|
@@ -294,20 +280,17 @@ Solo los acepta el número `SALES_PHONE` (si un cliente escribe «alta …» o �
 | `baja 871 123 4567` | Lo desactiva: deja de poder hacer pedidos y recibe el mensaje de «no registrado» |
 | `clientes` | Lista los clientes activos |
 | `buscar juan` | Busca por nombre o teléfono (incluye inactivos) |
-| `pedidos` | Pendientes de ventas y entregas programadas |
+| `pedidos` | Resumen: pendientes de ventas y entregas programadas |
 | `pedido 12` | Detalle del pedido `PED-0012` (también `PED-0012`, `#12`) |
-| `programar 12 viernes llega en la tarde` | Fija (o cambia) la fecha de entrega, con nota opcional, y avisa al cliente. Fechas: `hoy`, `mañana`, `pasado mañana`, `lunes`…`domingo` (el próximo), `15/11`, `15/11/2026`, `2026-11-15`. También `confirmar` |
-| `entregado 12` | Marca entregado y avisa al cliente |
-| `cancelar 12 sin existencia` | Cancela con motivo opcional y avisa al cliente |
 | `ayuda` (o cualquier otro texto) | Muestra los comandos |
 
-Un teléfono de 10 dígitos se toma como número de México (+52). El aviso de pedido nuevo que recibe ventas incluye el comando para programarlo.
+Un teléfono de 10 dígitos se toma como número de México (+52).
 
 ## Panel web `/admin`
 
 Con `ADMIN_PASSWORD` en `.env` (y opcionalmente `ADMIN_USERNAME`), el backend sirve un panel protegido con usuario y contraseña:
 
-- **Pedidos** (página inicial): pestañas por estado con contador, búsqueda por folio/cliente/teléfono, filtro por fecha de registro y **Exportar a Excel** (hojas *Pedidos* y *Partidas*, con kg equivalentes). Cada pedido tiene su página con datos, acciones (programar/reprogramar entrega, entregado, cancelar) y los mensajes enviados.
+- **Pedidos** (página inicial): pestañas por estado con contador, búsqueda por folio/cliente/teléfono, filtro por fecha de registro y **Exportar a Excel** (hojas *Pedidos* y *Partidas*, con kg equivalentes). Cada pedido tiene su página con datos, acciones (programar/reprogramar entrega, entregado, cancelar) y los mensajes relacionados.
 - **Clientes:** agregar, editar nombre, activar/desactivar, buscar y filtrar.
 - **Productos:** agregar, editar (nombre, otras formas de llamarlo, unidades, kg por bulto) y activar/desactivar. El código no cambia después del alta.
 - **Mensajes:** fallidos (o todos) con el error de Meta; muestra cuántos fallaron en las últimas 24 h.
