@@ -25,6 +25,7 @@ _OPTIONAL_FIELDS = (
     "sales_notification_template",
     "admin_password",
     "order_update_template",
+    "alert_webhook_url",
 )
 
 # Obligatorios cuando APP_ENV=production.
@@ -77,6 +78,10 @@ class Settings(BaseSettings):
     # Panel de administración (/admin). Sin contraseña queda deshabilitado.
     admin_username: str = "admin"
     admin_password: SecretStr | None = None
+
+    # Alertas (ntfy, Slack o Discord). Sin URL solo se registran en el log.
+    alert_webhook_url: SecretStr | None = None
+    whatsapp_check_interval: float = Field(default=1800, ge=0)  # segundos; 0 = sin revisión periódica
 
     # Worker
     worker_enabled: bool = True
