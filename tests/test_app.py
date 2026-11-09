@@ -25,6 +25,8 @@ def test_normalize_phone_rejects_invalid(raw):
 
 def test_format_phone_display():
     assert format_phone_display("525512345678") == "+52 55 1234 5678"
+    assert format_phone_display("523323125634") == "+52 33 2312 5634"
+    assert format_phone_display("528713427556") == "+52 871 342 7556"
     assert format_phone_display("15551234567") == "+15551234567"
 
 

@@ -13,7 +13,7 @@ from app.api.admin import router as admin_router
 from app.api.webhook import router as webhook_router
 from app.config import Settings, get_settings
 from app.db.database import check_db, init_db, open_db
-from app.integrations.whatsapp import WhatsAppClient, WhatsAppConfigError
+from app.integrations.whatsapp import WhatsAppClient, WhatsAppConfigError, WhatsAppError
 from app.workers.message_worker import MessageWorker
 
 logger = logging.getLogger("sales_bot")
@@ -39,6 +39,20 @@ def configure_logging(level: str) -> None:
         access_logger.addFilter(RedactVerifyTokenFilter())
 
 
+def check_whatsapp(client: WhatsAppClient) -> bool:
+    """Comprueba token y PHONE_NUMBER_ID al arrancar; un error se registra pero no detiene el servicio."""
+    try:
+        info = client.get_phone_number_info()
+    except WhatsAppError as exc:
+        logger.error("No se pudo validar la conexión con WhatsApp (revisa token y PHONE_NUMBER_ID): %s", exc)
+        return False
+    logger.info(
+        "WhatsApp conectado: %s (%s), calidad %s",
+        info.get("display_phone_number", "?"), info.get("verified_name", "?"), info.get("quality_rating", "?"),
+    )
+    return True
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     settings: Settings = app.state.settings
@@ -55,6 +69,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             whatsapp = WhatsAppClient.from_settings(settings)
         except WhatsAppConfigError as exc:
             logger.warning("%s", exc)
+        else:
+            await asyncio.to_thread(check_whatsapp, whatsapp)
         worker_task = asyncio.create_task(MessageWorker(settings, whatsapp).run(stop), name="message-worker")
 
     yield

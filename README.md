@@ -2,7 +2,12 @@
 
 Backend (FastAPI + SQLite) que recibe pedidos por WhatsApp, los valida contra un catálogo local y los registra para que el área de ventas asigne y confirme la fecha de entrega. La arquitectura completa está en el plan de arquitectura (v1.0).
 
-**Estado actual:** etapas 1–8 funcionales en desarrollo: webhook de Meta, envío por WhatsApp, agente OpenAI (Responses API + Structured Outputs), motor de pedidos con confirmación, folio y aviso al vendedor, worker con reintentos. Listo para desplegar con Docker en la VM (ver [Despliegue en la VM](#despliegue-en-la-vm-oracle-cloud)). El aviso al vendedor puede enviarse con plantilla de Meta para que llegue fuera de la ventana de 24 h (ver [Aviso al vendedor](#aviso-al-vendedor-plantilla)).
+**Estado actual:** en producción en la VM (`ventas.proadel.app`). Webhook de Meta, agente OpenAI (Responses API + Structured Outputs), motor de pedidos con confirmación y folio, aviso al vendedor (texto o [plantilla](#aviso-al-vendedor-plantilla)), [administración de clientes](#administrar-clientes) por WhatsApp y panel `/admin`, worker con reintentos, respaldos y script de despliegue.
+
+Documentos:
+
+- [Manual de operación](docs/MANUAL_OPERACION.md): para el equipo de ventas del cliente.
+- [Plan de entrega](docs/PLAN_ENTREGA.md): qué está listo, bloqueantes, decisiones y mejoras propuestas.
 
 ### Cómo responde el bot
 
@@ -147,8 +152,10 @@ docker compose up -d --build
 docker compose run --rm sales-bot python -m scripts.seed_db   # clientes y catálogo
 docker compose ps                            # STATUS debe pasar a "healthy"
 curl http://127.0.0.1:8003/health            # {"status":"ok","database":"ok"}
-docker compose logs -f                       # debe mostrar "Worker iniciado"
+docker compose logs -f                       # debe mostrar "WhatsApp conectado" y "Worker iniciado"
 ```
+
+Programar el respaldo diario (ver [Respaldo de la base](#respaldo-de-la-base)).
 
 Después, en Meta → WhatsApp → Configuration → Webhook: Callback URL `https://ventas.proadel.app/webhook/whatsapp`, mismo verify token, campo `messages` suscrito. Si `cloudflared` corre en un contenedor en lugar de en el host, `127.0.0.1` no apunta a la VM: usar la red de Docker o `network_mode: host` para el túnel.
 
@@ -156,10 +163,11 @@ Después, en Meta → WhatsApp → Configuration → Webhook: Callback URL `http
 
 ```bash
 cd ventasgg
-git pull
-docker compose up -d --build
-docker compose run --rm sales-bot python -m scripts.seed_db   # solo si cambiaron los CSV
+deploy/deploy.sh                 # rama main; otra rama: deploy/deploy.sh <rama>
+docker compose run --rm sales-bot python -m scripts.seed_db   # solo si cambió products.csv
 ```
+
+`deploy.sh` revisa que `.env` tenga las variables obligatorias, respalda la base, trae el código (`git pull --ff-only`), reconstruye, espera a que el contenedor esté `healthy` y muestra si WhatsApp quedó conectado. Si algo falla, se detiene y muestra los logs.
 
 Lo único que no está en el repo es `.env`. Clientes, pedidos y mensajes viven en el volumen, no en la carpeta, así que si prefieres clonar en una carpeta nueva basta con copiar `.env` (no hace falta llevarse `data/`):
 
@@ -175,10 +183,25 @@ Al reiniciar, el worker retoma los mensajes que quedaron a medias; la base vive 
 
 ### Respaldo de la base
 
-```bash
-docker compose exec sales-bot python -c "import sqlite3; sqlite3.connect('/data/sales_bot.db').backup(sqlite3.connect('/data/respaldo.db'))"
-docker compose cp sales-bot:/data/respaldo.db ./respaldo-$(date +%F).db
+`deploy/backup.sh` crea un respaldo consistente (con el bot en marcha), verifica su integridad, conserva 7 en el volumen y copia cada uno a `~/ventasgg-backups` en la VM, donde se guardan 30 días. Programarlo una vez con `crontab -e`:
+
+```text
+15 3 * * * /home/<usuario>/ventasgg/deploy/backup.sh >> /home/<usuario>/ventasgg-backups/backup.log 2>&1
 ```
+
+Respaldo manual: `deploy/backup.sh`. Restaurar uno:
+
+```bash
+deploy/backup.sh                              # respaldo del estado actual, por si acaso
+docker compose stop sales-bot
+docker compose run --rm -v ~/ventasgg-backups:/restore:ro sales-bot python -c \
+  "import sqlite3; sqlite3.connect('/restore/sales_bot-AAAAMMDD-HHMMSS.db').backup(sqlite3.connect('/data/sales_bot.db'))"
+docker compose start sales-bot
+```
+
+Se restaura con la API de backup de SQLite (como el usuario del contenedor), no copiando el archivo encima: así no quedan permisos de root ni un WAL viejo aplicado sobre la base restaurada.
+
+Estos respaldos siguen en la misma VM; para protegerse de perderla, copiarlos también fuera (ver [plan de entrega](docs/PLAN_ENTREGA.md)).
 
 ### Revisar pedidos y mensajes
 
@@ -212,6 +235,9 @@ Con `ADMIN_PASSWORD` en `.env` (y opcionalmente `ADMIN_USERNAME`), el backend si
 - **Clientes:** agregar, editar nombre, activar/desactivar, buscar y filtrar.
 - **Productos:** consulta del catálogo (se edita en `products.csv` + `seed_db`).
 - **Pedidos:** los últimos 200 con cliente, productos, fecha solicitada, urgencia y estado.
+- **Mensajes:** fallidos (o todos) con el error de Meta; muestra cuántos fallaron en las últimas 24 h.
+
+Las horas se muestran en la zona `TZ` (`America/Mexico_City`).
 
 El túnel solo publica `/webhook*`, así que el panel **no queda expuesto a internet**. Para abrirlo desde tu computadora, crea un túnel SSH a la VM y entra a http://localhost:8003/admin:
 

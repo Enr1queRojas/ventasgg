@@ -70,7 +70,7 @@ def test_parse_admin_phone_assumes_mexico_for_10_digits(raw, phone):
 
 def test_alta_registers_customer_who_can_then_order(conn, admin):
     reply = admin("alta Juan Pérez 871 123 4567")
-    assert "Cliente registrado: Juan Pérez — +52 87 1123 4567" in reply
+    assert "Cliente registrado: Juan Pérez — +52 871 123 4567" in reply
     customer = repository.get_customer_by_phone(conn, "528711234567")
     assert customer is not None and customer.name == "Juan Pérez" and customer.active
     # el nuevo cliente ya no recibe el mensaje de «no registrado»

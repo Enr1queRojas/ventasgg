@@ -7,7 +7,7 @@ transacción (``with transaction(conn): ...``) cuando agrupa varias escrituras.
 import json
 import sqlite3
 from collections.abc import Iterable, Sequence
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 from app.models import (
     ACTIVE_ORDER_STATUSES,
@@ -419,3 +419,18 @@ def list_recent_orders(conn: sqlite3.Connection, *, limit: int = 100) -> list[di
         (limit,),
     )
     return [dict(r) for r in rows]
+
+
+def list_recent_messages(conn: sqlite3.Connection, *, failed_only: bool = False, limit: int = 200) -> list[dict]:
+    sql = "SELECT id, direction, phone, text, message_type, status, last_error, created_at FROM messages"
+    if failed_only:
+        sql += " WHERE status = 'failed'"
+    sql += " ORDER BY id DESC LIMIT ?"
+    return [dict(r) for r in conn.execute(sql, (limit,))]
+
+
+def count_failed_messages_since(conn: sqlite3.Connection, *, hours: int) -> int:
+    cutoff = (datetime.now(UTC) - timedelta(hours=hours)).strftime("%Y-%m-%dT%H:%M:%S")
+    return conn.execute(
+        "SELECT COUNT(*) FROM messages WHERE status = 'failed' AND updated_at >= ?", (cutoff,)
+    ).fetchone()[0]

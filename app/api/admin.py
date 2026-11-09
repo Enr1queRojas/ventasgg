@@ -12,9 +12,11 @@ import hashlib
 import hmac
 import logging
 import secrets
+from datetime import UTC, datetime
 from html import escape
 from typing import Annotated
 from urllib.parse import parse_qs, urlencode
+from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.concurrency import run_in_threadpool
@@ -118,7 +120,7 @@ background:var(--ok-bg)}.badge.off{background:var(--err-bg)}.flash{padding:10px 
 background:var(--ok-bg)}.flash.err{background:var(--err-bg)}
 """
 
-_NAV = (("clientes", "Clientes"), ("productos", "Productos"), ("pedidos", "Pedidos"))
+_NAV = (("clientes", "Clientes"), ("productos", "Productos"), ("pedidos", "Pedidos"), ("mensajes", "Mensajes"))
 
 
 def _page(title: str, active: str, body: str, *, msg: str = "", err: str = "") -> HTMLResponse:
@@ -147,8 +149,17 @@ def _badge(active: bool) -> str:
     return '<span class="badge">Activo</span>' if active else '<span class="badge off">Inactivo</span>'
 
 
-def _date(value: str | None) -> str:
-    return escape(value[:16].replace("T", " ")) if value else "—"
+def _date(value: str | None, tz: ZoneInfo) -> str:
+    """Fecha UTC de la base (ISO 8601) en la zona horaria del negocio."""
+    if not value:
+        return "—"
+    try:
+        moment = datetime.fromisoformat(value)
+    except ValueError:
+        return escape(value)
+    if moment.tzinfo is None:
+        moment = moment.replace(tzinfo=UTC)
+    return moment.astimezone(tz).strftime("%d/%m/%Y %H:%M")
 
 
 # --------------------------------------------------------------------------- rutas
@@ -172,6 +183,7 @@ def customers_page(settings: Admin, q: str = "", estado: str = "todos", msg: str
     elif estado == "inactivos":
         customers = [c for c in customers if not c.active]
     token = escape(csrf_token(settings))
+    tz = settings.timezone
 
     def row(c: Customer) -> str:
         badge = _badge(c.active)
@@ -188,7 +200,7 @@ def customers_page(settings: Admin, q: str = "", estado: str = "todos", msg: str
         )
         return (
             f"<tr><td>{rename}</td><td class=nowrap>{escape(format_phone_display(c.phone))}</td><td>{badge}</td>"
-            f"<td>{orders.get(c.id, 0)}</td><td class='muted nowrap'>{_date(c.created_at)}</td><td>{toggle}</td></tr>"
+            f"<td>{orders.get(c.id, 0)}</td><td class='muted nowrap'>{_date(c.created_at, tz)}</td><td>{toggle}</td></tr>"
         )
 
     options = "".join(
@@ -277,6 +289,7 @@ y se carga con <code>python -m scripts.seed_db</code>.</p>
 def orders_page(settings: Admin) -> HTMLResponse:
     with open_db(settings.database_path) as conn:
         orders = repository.list_recent_orders(conn, limit=200)
+    tz = settings.timezone
 
     def row(o: dict) -> str:
         urgency = URGENCY_LABELS.get(o["urgency"], "—") if o["urgency"] else "—"
@@ -287,12 +300,67 @@ def orders_page(settings: Admin) -> HTMLResponse:
             f"<td>{escape(o['customer_name'])}<br><span class='muted nowrap'>{escape(format_phone_display(o['customer_phone']))}</span></td>"
             f"<td>{escape(o['items'] or '—')}</td><td class=nowrap>{escape(o['requested_date'] or '—')}</td>"
             f"<td>{escape(urgency)}</td><td>{escape(STATUS_LABELS.get(o['status'], o['status']))}</td>"
-            f"<td class=muted>{escape(o['notes'] or '')}</td><td class='muted nowrap'>{_date(o['confirmed_at'] or o['created_at'])}</td></tr>"
+            f"<td class=muted>{escape(o['notes'] or '')}</td><td class='muted nowrap'>{_date(o['confirmed_at'] or o['created_at'], tz)}</td></tr>"
         )
 
     rows = "".join(row(o) for o in orders) or "<tr><td colspan=8 class=muted>Todavía no hay pedidos.</td></tr>"
     body = f"""
-<div class="card"><p class="muted">Últimos {len(orders)} pedidos (horas en UTC).</p>
+<div class="card"><p class="muted">Últimos {len(orders)} pedidos.</p>
 <div class="table"><table><thead><tr><th>Folio</th><th>Cliente</th><th>Productos</th><th>Fecha solicitada</th>
 <th>Urgencia</th><th>Estado</th><th>Observaciones</th><th>Registrado</th></tr></thead><tbody>{rows}</tbody></table></div></div>"""
     return _page("Pedidos", "pedidos", body)
+
+
+MESSAGE_STATUS_LABELS = {
+    "pending": "En cola", "processing": "Procesando", "processed": "Procesado", "sent": "Enviado", "failed": "Fallido",
+}
+
+
+@router.get("/mensajes", response_class=HTMLResponse)
+def messages_page(settings: Admin, estado: str = "fallidos") -> HTMLResponse:
+    with open_db(settings.database_path) as conn:
+        messages = repository.list_recent_messages(conn, failed_only=estado != "todos", limit=200)
+        failed_24h = repository.count_failed_messages_since(conn, hours=24)
+        names = {c.phone: c.name for c in repository.list_customers(conn, limit=5000)}
+    tz = settings.timezone
+
+    def who(phone: str) -> str:
+        try:
+            canonical = parse_admin_phone(phone)
+        except InvalidPhoneError:
+            canonical = phone
+        if settings.sales_phone and canonical == settings.sales_phone:
+            label = "Ventas"
+        else:
+            label = names.get(canonical, "No registrado")
+        return f"{escape(label)}<br><span class='muted nowrap'>{escape(format_phone_display(canonical))}</span>"
+
+    def row(m: dict) -> str:
+        direction = "Recibido" if m["direction"] == "inbound" else "Enviado"
+        state = MESSAGE_STATUS_LABELS.get(m["status"], m["status"])
+        badge = f'<span class="badge off">{state}</span>' if m["status"] == "failed" else escape(state)
+        text = escape((m["text"] or "")[:300]) or "<span class=muted>(sin texto)</span>"
+        if m["message_type"] == "template":
+            text = "<span class=muted>[plantilla]</span> " + text
+        return (
+            f"<tr><td class='muted nowrap'>{_date(m['created_at'], tz)}</td><td>{direction}</td><td>{who(m['phone'])}</td>"
+            f"<td>{text}</td><td>{badge}</td><td class=muted>{escape(m['last_error'] or '')}</td></tr>"
+        )
+
+    options = "".join(
+        f'<option value="{v}"{" selected" if v == estado else ""}>{label}</option>'
+        for v, label in (("fallidos", "Solo fallidos"), ("todos", "Todos"))
+    )
+    rows = "".join(row(m) for m in messages) or "<tr><td colspan=6 class=muted>Sin mensajes.</td></tr>"
+    summary = (
+        f'<div class="flash err">{failed_24h} mensaje(s) fallido(s) en las últimas 24 h.</div>' if failed_24h
+        else '<div class="flash">Sin mensajes fallidos en las últimas 24 h.</div>'
+    )
+    body = f"""{summary}
+<div class="card"><form method="get" class="row"><div><label for="e">Mostrar</label>
+<select id="e" name="estado">{options}</select></div><button>Filtrar</button></form>
+<p class="muted">Error 131047: el destinatario no ha escrito en 24 h (se necesita plantilla). 131030: la app de Meta
+no está publicada o el número no está autorizado. 190: token vencido o inválido.</p>
+<div class="table"><table><thead><tr><th>Fecha</th><th>Tipo</th><th>Contacto</th><th>Texto</th><th>Estado</th><th>Error</th>
+</tr></thead><tbody>{rows}</tbody></table></div></div>"""
+    return _page("Mensajes", "mensajes", body)

@@ -41,9 +41,15 @@ def normalize_phone(raw: str) -> str:
     return digits
 
 
+# Ciudad de México, Guadalajara y Monterrey usan lada de 2 dígitos; el resto de México, de 3.
+_MX_TWO_DIGIT_AREA = {"55", "56", "33", "81"}
+
+
 def format_phone_display(phone: str) -> str:
-    """Formato legible para mensajes: ``+52 55 1234 5678`` (México) o ``+<dígitos>``."""
+    """Formato legible: ``+52 55 1234 5678``, ``+52 871 123 4567`` (México) o ``+<dígitos>``."""
     if len(phone) == 12 and phone.startswith("52"):
         n = phone[2:]
-        return f"+52 {n[:2]} {n[2:6]} {n[6:]}"
+        if n[:2] in _MX_TWO_DIGIT_AREA:
+            return f"+52 {n[:2]} {n[2:6]} {n[6:]}"
+        return f"+52 {n[:3]} {n[3:6]} {n[6:]}"
     return f"+{phone}"

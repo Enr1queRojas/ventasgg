@@ -84,3 +84,18 @@ def test_send_template():
     body = json.loads(calls[0].content)
     assert body["type"] == "template"
     assert body["template"] == {"name": "hello_world", "language": {"code": "en_US"}}
+
+
+def test_startup_check_logs_number_or_error(caplog):
+    from app.main import check_whatsapp
+
+    info = {"display_phone_number": "+52 1 871 233 3190", "verified_name": "Graneros Guerra", "quality_rating": "GREEN"}
+    client, _ = make_client(lambda request: httpx.Response(200, json=info))
+    with caplog.at_level("INFO", logger="sales_bot"):
+        assert check_whatsapp(client) is True
+    assert "Graneros Guerra" in caplog.text
+
+    client, _ = make_client(meta_error(401, 190, "Error validating access token"))
+    with caplog.at_level("ERROR", logger="sales_bot"):
+        assert check_whatsapp(client) is False
+    assert "code=190" in caplog.text and "TOKEN" not in caplog.text

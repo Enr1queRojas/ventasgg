@@ -55,7 +55,7 @@ def test_customers_page_lists_and_escapes(client, conn):
     response = client.get("/admin/clientes", auth=AUTH)
     assert response.status_code == 200
     assert "&lt;script&gt;x&lt;/script&gt; Pérez" in response.text and "<script>x" not in response.text
-    assert "+52 87 1123 4567" in response.text
+    assert "+52 871 123 4567" in response.text
     assert response.headers["X-Frame-Options"] == "DENY"
     assert re.search(r'name="csrf" value="[0-9a-f]{64}"', response.text)
 
@@ -114,3 +114,23 @@ def test_products_and_orders_pages(client, conn, customer, products):
     repository.set_order_item(conn, order.id, products[0].id, 30, Unit.BULTOS)
     text = client.get("/admin/pedidos", auth=AUTH).text
     assert "Cliente de prueba" in text and "Maíz blanco: 30 bultos" in text and "Borrador" in text
+
+
+def test_times_shown_in_business_timezone(client, conn):
+    conn.execute(
+        "INSERT INTO customers (name, phone, created_at) VALUES ('Hora', '528711111111', '2026-11-09T01:30:00.000Z')"
+    )
+    assert "08/11/2026 19:30" in client.get("/admin/clientes", auth=AUTH).text  # America/Mexico_City (UTC-6)
+
+
+def test_messages_page_shows_failures(client, conn, customer):
+    ok = repository.enqueue_outbound(conn, phone="5215512345678", text="respuesta enviada")
+    bad = repository.enqueue_outbound(conn, phone="523311112222", text="aviso a ventas")
+    repository.mark_sent(conn, ok, "wamid.ok")
+    repository.mark_delivery_failed(conn, bad, "(#131047) Re-engagement message")
+    text = client.get("/admin/mensajes", auth=AUTH).text
+    assert "1 mensaje(s) fallido(s)" in text
+    assert "aviso a ventas" in text and "131047" in text and "Ventas" in text
+    assert "respuesta enviada" not in text  # por defecto solo fallidos
+    everything = client.get("/admin/mensajes?estado=todos", auth=AUTH).text
+    assert "respuesta enviada" in everything and "Cliente de prueba" in everything
