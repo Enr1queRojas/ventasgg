@@ -132,3 +132,63 @@ def test_customer_cannot_run_commands(conn, customer, admin):
     """Un cliente que escribe «alta ...» no administra nada (va al flujo de pedidos)."""
     admin("alta Intruso 8711234567", phone="5215512345678")
     assert repository.get_customer_by_phone(conn, "528711234567", active_only=False) is None
+
+
+# ------------------------------------------------------------------ frases naturales
+
+
+@pytest.mark.parametrize(
+    ("text", "action", "argument"),
+    [
+        ("¿Qué pedidos hay pendientes?", "pedidos", ""),
+        ("lista de pedidos", "pedidos", ""),
+        ("ver pedidos", "pedidos", ""),
+        ("Pedidos de hoy", "pedidos", ""),
+        ("¿qué entregas tengo programadas?", "pedidos", ""),
+        ("ver el pedido 12", "pedido", "12"),
+        ("detalle del pedido #3", "pedido", "3"),
+        ("PED-0012", "pedido", "12"),
+        ("¿cómo va el folio 7?", "pedido", "7"),
+        ("lista de clientes", "clientes", ""),
+        ("¿cuántos clientes tengo?", "clientes", ""),
+        ("busca a Juan", "buscar", "Juan"),
+        ("buscar cliente Ana López", "buscar", "Ana López"),
+        ("Da de alta a Juan Pérez con el teléfono 871 123 4567", "alta", "Juan Pérez con el teléfono 871 123 4567"),
+        ("dar de baja al 871 123 4567", "baja", "871 123 4567"),
+        ("programar 12 viernes", "solo_panel", ""),
+        ("cancelar pedido 3", "solo_panel", ""),
+        ("Hola", "ayuda", ""),
+        ("gracias", "cortesia", ""),
+        ("¿me mandas el reporte de ventas?", "no_entendido", "¿me mandas el reporte de ventas?"),
+    ],
+)
+def test_parse_natural_phrases(text, action, argument):
+    assert parse_command(text) == Command(action, argument)
+
+
+@pytest.mark.parametrize(
+    ("text", "name"),
+    [
+        ("Da de alta a Juan Pérez con el teléfono 871 123 4567", "Juan Pérez"),
+        ("Nuevo cliente: Ferretería López, 871-765-4321", "Ferretería López"),
+        ("agrega al cliente Ana Ruiz cel 8711234567", "Ana Ruiz"),
+        ("registra a Pedro Gómez número +52 871 123 4567", "Pedro Gómez"),
+        ("alta Juan Pérez 871 123 4567", "Juan Pérez"),
+    ],
+)
+def test_alta_from_natural_phrase(conn, admin, text, name):
+    assert "Cliente registrado" in admin(text)
+    customer = repository.list_customers(conn)[0]
+    assert customer.name == name and customer.phone in {"528711234567", "528717654321"}
+
+
+def test_unknown_message_says_so(admin):
+    reply = admin("¿me mandas el reporte?")
+    assert reply.startswith("No entendí «¿me mandas el reporte?»") and "*pedidos*" in reply
+    assert admin("gracias").startswith("¡Con gusto!")
+
+
+def test_lista_de_pedidos_no_longer_lists_customers(conn, admin):
+    admin("alta Juan Pérez 8711234567")
+    reply = admin("lista de pedidos")
+    assert "No hay pedidos pendientes" in reply and "Juan Pérez" not in reply

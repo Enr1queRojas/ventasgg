@@ -140,6 +140,9 @@ class TurnApplier:
                 return self._register(order)
             return self._next_step(order, turn, changed=False)
 
+        if turn.intent is AgentIntent.GREETING and not changes and order is None:
+            return self._say(texts.greeting(self.customer.name))
+
         if not changes:
             fallback = "¿Qué producto y cantidad necesitas?" if order is None else self._missing_question(order)
             return self._say(safe_reply(turn.reply, fallback), order.id if order else None)

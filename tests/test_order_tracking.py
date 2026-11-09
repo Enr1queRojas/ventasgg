@@ -90,7 +90,7 @@ def test_pedidos_and_detail(conn, customer, products, sales):
     other = repository.upsert_customer(conn, name="Ana López", phone="+52 871 765 4321")
     pending = registered_order(conn, other, products)
     [listing] = sales("pedidos")
-    assert "Pendientes de ventas (1)" in listing[1] and pending.folio in listing[1] and "Ana López" in listing[1]
+    assert "Pendientes de programar (1)" in listing[1] and pending.folio in listing[1] and "Ana López" in listing[1]
     assert "Entregas programadas (1)" in listing[1] and first.folio in listing[1]
     [detail] = sales(f"pedido {first.id}")
     assert "Entrega programada" in detail[1] and "Maíz blanco: 30 bultos" in detail[1]

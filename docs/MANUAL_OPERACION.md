@@ -41,7 +41,7 @@ Los cambios de estado se hacen **solo en el panel** (sección 5). El sistema **n
 
 ## 4. Comandos desde el WhatsApp de ventas
 
-Solo el número de ventas puede usar estos comandos. Se escriben como un mensaje normal al número de pedidos. Por WhatsApp los pedidos solo se **consultan**; se gestionan en el panel.
+Solo el número de ventas puede usar estos comandos. Se escriben como un mensaje normal al número de pedidos; también entiende frases como «¿qué pedidos hay pendientes?», «ver el pedido 12» o «da de alta a Juan Pérez con el teléfono 871 123 4567». Por WhatsApp los pedidos solo se **consultan**; se gestionan en el panel.
 
 **Pedidos** (el número es el folio sin ceros: `12` = `PED-0012`)
 

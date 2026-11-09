@@ -18,7 +18,7 @@ Documentos:
 | Audio, foto, documento | Pide el pedido por texto |
 | Cliente registrado | El modelo (`OPENAI_MODEL`) interpreta; Python valida contra el catálogo, actualiza el borrador, pregunta lo que falta y, con el pedido completo, muestra un resumen. Solo un "sí" al resumen vigente registra el pedido (`pending_sales`, folio `PED-0001`) y avisa al vendedor |
 
-El modelo solo interpreta y redacta saludos/respuestas a preguntas. Resúmenes, confirmaciones, folios y el aviso de que **ventas asignará y confirmará la fecha de entrega** los genera el backend. Si `OPENAI_API_KEY` no está configurada, los clientes reciben una respuesta provisional.
+El modelo solo interpreta y redacta respuestas a preguntas. El saludo (cuando el cliente saluda sin pedido en curso) es un texto fijo: `greeting` en `app/services/notification_service.py`. Resúmenes, confirmaciones, folios y el aviso de que **ventas asignará y confirmará la fecha de entrega** los genera el backend. Si `OPENAI_API_KEY` no está configurada, los clientes reciben una respuesta provisional.
 
 ## Requisitos
 
@@ -272,7 +272,7 @@ Ventas programa (o reprograma) la entrega, marca entregado o cancela **solo desd
 
 ## Comandos de ventas por WhatsApp
 
-Solo los acepta el número `SALES_PHONE` (si un cliente escribe «alta …», entra al flujo normal de pedidos). Se interpretan con reglas fijas, sin OpenAI. Los pedidos solo se **consultan** por aquí; se gestionan en el panel.
+Solo los acepta el número `SALES_PHONE` (si un cliente escribe «alta …», entra al flujo normal de pedidos). Se interpretan con reglas fijas, sin OpenAI, y aceptan el comando corto o una frase normal: «¿qué pedidos hay pendientes?», «ver el pedido 12», «da de alta a Juan Pérez con el teléfono 871 123 4567», «busca a Juan». Los pedidos solo se **consultan** por aquí; si el vendedor intenta programar, entregar o cancelar, el bot le indica usar el panel. Lo que no entiende lo dice y muestra los comandos.
 
 | Mensaje | Qué hace |
 |---|---|
