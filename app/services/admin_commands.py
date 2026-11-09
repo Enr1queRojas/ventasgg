@@ -1,7 +1,9 @@
 """Comandos del número de ventas (``SALES_PHONE``): alta de clientes y consulta de pedidos.
 
 Se interpretan con reglas fijas (sin LLM) para que una alta o baja nunca dependa de cómo
-el modelo entienda el mensaje. Los pedidos solo se consultan aquí; se gestionan en el panel.
+el modelo entienda el mensaje. Aceptan el comando corto o una frase normal («da de alta a
+Juan Pérez con el teléfono 871…», «¿qué pedidos hay pendientes?», «ver el pedido 12»).
+Los pedidos solo se consultan aquí; se gestionan en el panel.
 
     alta Juan Pérez 871 123 4567     registra (o reactiva y renombra) un cliente
     baja 871 123 4567                lo desactiva: deja de poder hacer pedidos
@@ -37,22 +39,21 @@ _ALTA_NAME_FIRST = re.compile(rf"^(?P<name>.+?)[\s,]+(?P<phone>{_PHONE})$")
 _ALTA_PHONE_FIRST = re.compile(rf"^(?P<phone>{_PHONE})[\s,]+(?P<name>.+)$")
 
 HELP = (
-    "*Clientes*\n"
-    "• *alta* Nombre Teléfono — ej. alta Juan Pérez 871 123 4567\n"
-    "• *baja* Teléfono — ej. baja 871 123 4567\n"
-    "• *clientes* — lista los clientes activos\n"
-    "• *buscar* texto — busca por nombre o teléfono\n\n"
-    "*Pedidos* (el número es el folio: 12 = PED-0012)\n"
+    "Puedo ayudarte con:\n"
     "• *pedidos* — resumen de pendientes y entregas programadas\n"
-    "• *pedido* 12 — detalle\n"
-    "Para programar entregas, marcar entregados o cancelar usa el panel de administración.\n\n"
-    "Aquí también recibirás los avisos de pedidos nuevos."
+    "• *pedido 12* — detalle del PED-0012\n"
+    "• *alta* Juan Pérez 871 123 4567 — registrar un cliente\n"
+    "• *baja* 871 123 4567 — dar de baja a un cliente\n"
+    "• *clientes* — lista de clientes activos\n"
+    "• *buscar* juan — buscar un cliente\n"
+    "También entiendo frases como «¿qué pedidos hay pendientes?». "
+    "Las entregas se programan en el panel."
 )
 
 
 @dataclass(frozen=True)
 class Command:
-    action: str  # alta | baja | clientes | buscar | pedidos | pedido | ayuda
+    action: str  # alta | baja | clientes | buscar | pedidos | pedido | ayuda | cortesia | solo_panel | no_entendido
     argument: str = ""
 
 
@@ -60,24 +61,61 @@ def _fold(text: str) -> str:
     return "".join(c for c in unicodedata.normalize("NFD", text.lower()) if unicodedata.category(c) != "Mn")
 
 
-_ACTIONS = {
-    "alta": "alta", "agregar": "alta", "agrega": "alta", "registrar": "alta", "registra": "alta",
-    "baja": "baja", "desactivar": "baja", "desactiva": "baja",
-    "clientes": "clientes", "lista": "clientes", "listar": "clientes",
-    "buscar": "buscar", "busca": "buscar",
-    "pedidos": "pedidos", "pendientes": "pedidos",
-    "pedido": "pedido", "detalle": "pedido", "ver": "pedido",
-    "ayuda": "ayuda", "help": "ayuda", "menu": "ayuda", "comandos": "ayuda",
-}
+_THANKS = {"gracias", "ok", "okay", "listo", "perfecto", "va", "sale", "enterado", "excelente", "bien"}
+_GREETINGS = {"hola", "buenas", "buenos", "buen", "hey", "ayuda", "help", "menu", "comandos", "opciones", "inicio"}
+_ALTA = re.compile(
+    r"^\s*(?:por\s+favor\s*,?\s*)?(?:(?:d[aá]|dar|dame|darle|haz|hacer)\s+(?:de\s+)?alta|alta|agreg(?:a|ar|ue)"
+    r"|registr(?:a|ar|e)|nuevo\s+cliente)\b\s*:?\s*(?:(?:a|al)\s+)?(?:(?:el|la|un|una)\s+)?"
+    r"(?:(?:nuevo\s+)?cliente\s*:?\s*)?",
+    re.IGNORECASE,
+)
+_BAJA = re.compile(r"\b(?:(?:d[aá]|dar|darle)\s+de\s+baja|baja|desactiv(?:a|ar|e)|elimin(?:a|ar|e)|borr(?:a|ar|e))\b", re.I)
+_PHONE_LABEL = re.compile(
+    r"[\s,]+(?:y\s+)?(?:con\s+)?(?:el\s+)?(?:n[uú]mero|n[uú]m|tel[eé]fono|tel|cel(?:ular)?|whats(?:app)?)\s*:?\s*(?=\+?\(?\d)",
+    re.IGNORECASE,
+)
+_FOLIO = re.compile(r"\b(?:ped(?:ido)?|folio|orden)\s*(?:no\.?|n[uú]mero)?\s*[-#]?\s*(\d{1,6})\b|#\s*(\d{1,6})\b", re.I)
+_SEARCH = re.compile(
+    r"\bb[uú]sca(?:r|me)?\b\s*(?:(?:a|al)\s+)?(?:(?:el|la)\s+)?(?:cliente\s+)?(?P<term>.+)", re.IGNORECASE
+)
+_ORDER_WORDS = ("pedido", "pendiente", "entrega", "programad", "orden")
+# Acciones que solo se hacen en el panel.
+_PANEL_ONLY = {"programar", "programa", "reprogramar", "agendar", "confirmar", "confirma", "entregado", "entregada",
+               "entregar", "cancelar", "cancela", "cancelado"}
+PANEL_ONLY_REPLY = (
+    "Para programar entregas, marcar pedidos como entregados o cancelarlos usa el panel de administración "
+    "(Pedidos → Gestionar). Por aquí puedes consultarlos: *pedidos* o *pedido 12*."
+)
 
 
 def parse_command(text: str | None) -> Command:
-    text = (text or "").strip()
-    if not text:
+    """Interpreta un comando corto o una frase. Lo que no se entiende devuelve la ayuda."""
+    raw = (text or "").strip()
+    words = re.findall(r"[a-z0-9ñ]+", _fold(raw))
+    if not words:
         return Command("ayuda")
-    first, _, rest = text.partition(" ")
-    action = _ACTIONS.get(_fold(first).strip(".,:;!¡¿?"))
-    return Command(action, rest.strip()) if action else Command("ayuda")
+
+    if _ALTA.match(raw) and not _BAJA.search(raw):
+        return Command("alta", _ALTA.sub("", raw, count=1).strip(" .:"))
+    if words[0] in _PANEL_ONLY:
+        return Command("solo_panel")
+    if baja := _BAJA.search(raw):
+        phone = re.search(_PHONE, raw)
+        rest = re.sub(r"^\s*(?:(?:a|al)\s+)?(?:(?:el|la)\s+)?(?:cliente\s*)?", "", raw[baja.end():], flags=re.I)
+        return Command("baja", phone.group(0) if phone else rest.strip(" .:,"))
+    if folio := _FOLIO.search(raw):
+        return Command("pedido", str(int(folio.group(1) or folio.group(2))))
+    if search := _SEARCH.search(raw):
+        return Command("buscar", search.group("term").strip(" ?¿.!¡"))
+    if any(w.startswith(_ORDER_WORDS) for w in words):
+        return Command("pedidos")
+    if any(w.startswith("cliente") for w in words):
+        return Command("clientes")
+    if words[0] in _GREETINGS:
+        return Command("ayuda")
+    if words[0] in _THANKS:
+        return Command("cortesia")
+    return Command("no_entendido", raw)
 
 
 def parse_admin_phone(raw: str) -> str:
@@ -89,6 +127,7 @@ def parse_admin_phone(raw: str) -> str:
 
 
 def _split_name_phone(argument: str) -> tuple[str, str] | None:
+    argument = _PHONE_LABEL.sub(" ", argument).strip(" .")  # «Juan con el teléfono 871…» -> «Juan 871…»
     for pattern in (_ALTA_NAME_FIRST, _ALTA_PHONE_FIRST):
         match = pattern.match(argument.strip())
         if match:
@@ -163,22 +202,38 @@ def _order_command(conn: sqlite3.Connection, command: Command) -> str:
         return str(exc)
 
 
+_URGENCY = {"high": "urgencia alta", "critical": "urgencia crítica"}
+_SHORT_DAYS = ["lun", "mar", "mié", "jue", "vie", "sáb", "dom"]
+
+
+def _summary_line(row: dict, date_field: str, prefix: str) -> str:
+    when = date.fromisoformat(row[date_field]) if row[date_field] else None
+    parts = [f"• *{row['folio']}* · {row['customer_name']}", row["items"] or "sin productos"]
+    if when:
+        parts.append(f"{prefix} {_SHORT_DAYS[when.weekday()]} {when.strftime('%d/%m')}")
+    if row["urgency"] in _URGENCY:
+        parts.append(_URGENCY[row["urgency"]])
+    return " — ".join(parts)
+
+
 def _open_orders(conn: sqlite3.Connection) -> str:
     rows = repository.list_orders_for_admin(conn, statuses=order_tracking.OPEN_STATUSES, limit=LIST_LIMIT)
     if not rows:
         return "No hay pedidos pendientes ni entregas programadas."
-    pending = [r for r in rows if r["status"] == "pending_sales"]
-    scheduled = sorted((r for r in rows if r["status"] == "scheduled"), key=lambda r: r["delivery_date"])
+    pending = sorted((r for r in rows if r["status"] == "pending_sales"), key=lambda r: r["requested_date"] or "")
+    scheduled = sorted((r for r in rows if r["status"] == "scheduled"), key=lambda r: r["delivery_date"] or "")
     out = []
     if pending:
-        out.append(f"*Pendientes de ventas ({len(pending)})*")
-        out += [f"• {r['folio']} — {r['customer_name']} — pide {_short_date(r['requested_date'])}" for r in pending]
+        out.append(f"*Pendientes de programar ({len(pending)})*")
+        out += [_summary_line(r, "requested_date", "para el") for r in pending]
     if scheduled:
-        out.append(f"*Entregas programadas ({len(scheduled)})*")
-        out += [f"• {r['folio']} — {r['customer_name']} — entrega {_short_date(r['delivery_date'])}" for r in scheduled]
+        out.append(("\n" if pending else "") + f"*Entregas programadas ({len(scheduled)})*")
+        out += [_summary_line(r, "delivery_date", "entrega") for r in scheduled]
+    example = int((pending or scheduled)[0]["folio"].split("-")[-1])
+    out.append(f"\nDetalle: *pedido {example}*. Las entregas se programan en el panel.")
     text = "\n".join(out)
     if len(text) > MAX_REPLY_CHARS:
-        text = text[:MAX_REPLY_CHARS].rsplit("\n", 1)[0] + "\n… (lista recortada; usa el panel para verla completa)"
+        text = text[:MAX_REPLY_CHARS].rsplit("\n", 1)[0] + "\n… (lista recortada; consulta el panel)"
     return text
 
 
@@ -192,6 +247,12 @@ def execute(conn: sqlite3.Connection, command: Command, *, sales_phone: str | No
         return _order_command(conn, command)
     if command.action == "pedidos":
         return _open_orders(conn)
+    if command.action == "cortesia":
+        return "¡Con gusto! Escribe *pedidos* cuando quieras ver el resumen."
+    if command.action == "solo_panel":
+        return PANEL_ONLY_REPLY
+    if command.action == "no_entendido":
+        return f"No entendí «{command.argument[:80]}».\n\n{HELP}"
     return _customer_command(conn, command, sales_phone=sales_phone)
 
 

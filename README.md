@@ -272,7 +272,7 @@ Ventas programa (o reprograma) la entrega, marca entregado o cancela **solo desd
 
 ## Comandos de ventas por WhatsApp
 
-Solo los acepta el número `SALES_PHONE` (si un cliente escribe «alta …», entra al flujo normal de pedidos). Se interpretan con reglas fijas, sin OpenAI. Los pedidos solo se **consultan** por aquí; se gestionan en el panel.
+Solo los acepta el número `SALES_PHONE` (si un cliente escribe «alta …», entra al flujo normal de pedidos). Se interpretan con reglas fijas, sin OpenAI, y aceptan el comando corto o una frase normal: «¿qué pedidos hay pendientes?», «ver el pedido 12», «da de alta a Juan Pérez con el teléfono 871 123 4567», «busca a Juan». Los pedidos solo se **consultan** por aquí; si el vendedor intenta programar, entregar o cancelar, el bot le indica usar el panel. Lo que no entiende lo dice y muestra los comandos.
 
 | Mensaje | Qué hace |
 |---|---|
