@@ -97,6 +97,8 @@ def process_message(
             catalog=CatalogService.from_db(tx_conn),
             today=today,
             sales_phone=settings.sales_phone,
+            sales_template=settings.sales_notification_template,
+            sales_template_language=settings.sales_notification_template_language,
         ).apply(turn)
 
     return commit

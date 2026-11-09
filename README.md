@@ -2,7 +2,7 @@
 
 Backend (FastAPI + SQLite) que recibe pedidos por WhatsApp, los valida contra un catálogo local y los registra para que el área de ventas asigne y confirme la fecha de entrega. La arquitectura completa está en el plan de arquitectura (v1.0).
 
-**Estado actual:** etapas 1–8 funcionales en desarrollo: webhook de Meta, envío por WhatsApp, agente OpenAI (Responses API + Structured Outputs), motor de pedidos con confirmación, folio y aviso al vendedor, worker con reintentos. Listo para desplegar con Docker en la VM (ver [Despliegue en la VM](#despliegue-en-la-vm-oracle-cloud)). Pendiente: plantilla de Meta para avisos al vendedor fuera de la ventana de 24 h.
+**Estado actual:** etapas 1–8 funcionales en desarrollo: webhook de Meta, envío por WhatsApp, agente OpenAI (Responses API + Structured Outputs), motor de pedidos con confirmación, folio y aviso al vendedor, worker con reintentos. Listo para desplegar con Docker en la VM (ver [Despliegue en la VM](#despliegue-en-la-vm-oracle-cloud)). El aviso al vendedor puede enviarse con plantilla de Meta para que llegue fuera de la ventana de 24 h (ver [Aviso al vendedor](#aviso-al-vendedor-plantilla)).
 
 ### Cómo responde el bot
 
@@ -122,7 +122,8 @@ Variables en `.env` (nunca se versiona ni entra en la imagen Docker). Con `APP_E
 | `WHATSAPP_APP_SECRET` | ✔ | App settings → Basic → App secret (no el Client token) |
 | `WHATSAPP_API_VERSION` | ✔ | `v25.0` |
 | `SALES_PHONE` | ✔ | `+52 33 1234 5678` |
-| `SALES_NOTIFICATION_TEMPLATE` | | Nombre de la plantilla aprobada para avisar al vendedor (aún no se usa) |
+| `SALES_NOTIFICATION_TEMPLATE` | | Nombre (no el texto) de la plantilla aprobada para avisar al vendedor, p. ej. `nuevo_pedido_ventas`. Vacía: el aviso va como texto libre |
+| `SALES_NOTIFICATION_TEMPLATE_LANGUAGE` | | Idioma con el que se aprobó la plantilla. `es_MX` por defecto |
 | `WORKER_ENABLED` | | `true` |
 | `WORKER_POLL_INTERVAL` | | `1` (segundos) |
 | `WORKER_MAX_ATTEMPTS` | | `5` |
@@ -171,6 +172,37 @@ docker compose cp sales-bot:/data/respaldo.db ./respaldo-$(date +%F).db
 docker compose exec sales-bot python -c "import sqlite3; c=sqlite3.connect('/data/sales_bot.db'); [print(r) for r in c.execute('select folio,status,requested_date,urgency,created_at from orders order by id desc limit 20')]"
 docker compose exec sales-bot python -c "import sqlite3; c=sqlite3.connect('/data/sales_bot.db'); [print(r) for r in c.execute(\"select id,direction,status,last_error from messages where status='failed' order by id desc limit 20\")]"
 ```
+
+## Aviso al vendedor (plantilla)
+
+WhatsApp solo entrega texto libre si el destinatario escribió al número del bot en las últimas 24 h; si no, Meta acepta el envío y después lo marca como fallido (error 131047). Para que el aviso de pedido nuevo llegue siempre a `SALES_PHONE`, se envía con una plantilla aprobada cuando `SALES_NOTIFICATION_TEMPLATE` tiene valor (sin ella se envía como texto libre).
+
+Plantilla esperada (categoría **Utility**, idioma `es_MX`, parámetros posicionales):
+
+```text
+Encabezado: Nuevo pedido
+Cuerpo:
+Se registró el pedido {{1}} del cliente {{2}}, teléfono {{3}}.
+
+Productos: {{4}}
+Fecha solicitada: {{5}}
+Urgencia: {{6}}
+Observaciones: {{7}}
+
+Estado: pendiente de ventas. La fecha de entrega aún no está confirmada; asígnala y confírmala con el cliente.
+```
+
+| Parámetro | Valor |
+|---|---|
+| `{{1}}` | Folio (`PED-0001`) |
+| `{{2}}` | Nombre del cliente |
+| `{{3}}` | Teléfono del cliente |
+| `{{4}}` | Productos separados por `; ` (`Maíz blanco: 100 bultos; Alubia: 20 kg`) |
+| `{{5}}` | Fecha solicitada (`dd/mm/aaaa`) |
+| `{{6}}` | Urgencia (`Alta (me urge)`) |
+| `{{7}}` | Observaciones, o `-` si no hay |
+
+Los saltos de línea y espacios repetidos se compactan (Meta los rechaza en parámetros) y cada valor se recorta a 400 caracteres. La versión legible del aviso se guarda en `messages.text`; la plantilla, en `messages.template_payload` (esquema v3, la migración se aplica sola al arrancar). Si cambias el texto o el orden de los parámetros en Meta, ajusta `sales_notification_params` en `app/services/notification_service.py`.
 
 ## Decisiones de diseño relevantes
 

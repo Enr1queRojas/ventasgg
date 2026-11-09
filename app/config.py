@@ -66,7 +66,8 @@ class Settings(BaseSettings):
 
     # Sales
     sales_phone: str | None = None
-    sales_notification_template: str | None = None
+    sales_notification_template: str | None = None  # nombre de la plantilla aprobada en Meta
+    sales_notification_template_language: str = "es_MX"
 
     # Worker
     worker_enabled: bool = True

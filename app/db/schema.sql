@@ -77,6 +77,9 @@ CREATE TABLE IF NOT EXISTS messages (
     next_attempt_at      TEXT,
     last_error           TEXT,
     order_id             INTEGER REFERENCES orders(id),
+    -- Plantilla de Meta a enviar (message_type = 'template'): {"name", "language", "body_params"}.
+    -- ``text`` conserva la versión legible del mismo aviso.
+    template_payload     TEXT    CHECK (template_payload IS NULL OR json_valid(template_payload)),
     created_at           TEXT    NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
     updated_at           TEXT    NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
 );
@@ -84,6 +87,6 @@ CREATE TABLE IF NOT EXISTS messages (
 CREATE INDEX IF NOT EXISTS ix_messages_queue ON messages(direction, status, next_attempt_at, id);
 CREATE INDEX IF NOT EXISTS ix_messages_phone ON messages(phone, id);
 
-PRAGMA user_version = 2;
+PRAGMA user_version = 3;
 
 COMMIT;

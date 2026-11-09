@@ -104,6 +104,7 @@ class Message(_Record):
     order_id: int | None
     created_at: str
     updated_at: str
+    template_payload: str | None = None
 
 
 class OrderItem(_Record):

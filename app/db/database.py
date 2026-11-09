@@ -12,7 +12,7 @@ from contextlib import contextmanager
 from pathlib import Path
 
 SCHEMA_PATH = Path(__file__).with_name("schema.sql")
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 # Migraciones para bases existentes: versión de origen -> SQL que la lleva a la siguiente.
 # SQLite no permite modificar un CHECK, así que se reconstruye la tabla.
@@ -32,6 +32,13 @@ MIGRATIONS: dict[int, str] = {
     DROP TABLE order_items;
     ALTER TABLE order_items_v2 RENAME TO order_items;
     PRAGMA user_version = 2;
+    COMMIT;
+    """,
+    2: """
+    BEGIN;
+    ALTER TABLE messages ADD COLUMN template_payload TEXT
+        CHECK (template_payload IS NULL OR json_valid(template_payload));
+    PRAGMA user_version = 3;
     COMMIT;
     """,
 }

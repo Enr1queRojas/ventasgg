@@ -292,13 +292,14 @@ def enqueue_outbound(
     text: str,
     message_type: MessageType = MessageType.TEXT,
     order_id: int | None = None,
+    template_payload: str | None = None,
 ) -> int:
     row = conn.execute(
         """
-        INSERT INTO messages (direction, phone, text, message_type, status, order_id)
-        VALUES (?, ?, ?, ?, ?, ?) RETURNING id
+        INSERT INTO messages (direction, phone, text, message_type, status, order_id, template_payload)
+        VALUES (?, ?, ?, ?, ?, ?, ?) RETURNING id
         """,
-        (MessageDirection.OUTBOUND, phone, text, message_type, MessageStatus.PENDING, order_id),
+        (MessageDirection.OUTBOUND, phone, text, message_type, MessageStatus.PENDING, order_id, template_payload),
     ).fetchone()
     return row["id"]
 

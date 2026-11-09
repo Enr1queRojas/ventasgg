@@ -4,6 +4,7 @@ Todo lo de aquí se ejecuta dentro de la transacción del worker, junto con el e
 de las respuestas, para que un fallo no deje el pedido y los mensajes desalineados.
 """
 
+import json
 import logging
 import re
 import sqlite3
@@ -28,10 +29,26 @@ _UNSAFE_REPLY = re.compile(
 
 
 @dataclass(frozen=True)
+class TemplateMessage:
+    """Plantilla aprobada de Meta; se usa para escribir fuera de la ventana de 24 h."""
+
+    name: str
+    language: str
+    body_params: tuple[str, ...] = ()
+
+    def to_json(self) -> str:
+        return json.dumps(
+            {"name": self.name, "language": self.language, "body_params": list(self.body_params)},
+            ensure_ascii=False,
+        )
+
+
+@dataclass(frozen=True)
 class OutgoingText:
     phone: str
-    text: str
+    text: str  # con plantilla: versión legible del mismo aviso (historial y revisión)
     order_id: int | None = None
+    template: TemplateMessage | None = None
 
 
 def safe_reply(text: str | None, fallback: str) -> str:
@@ -83,6 +100,8 @@ class TurnApplier:
         catalog: CatalogService,
         today: date,
         sales_phone: str | None,
+        sales_template: str | None = None,
+        sales_template_language: str = "es_MX",
     ):
         self.conn = conn
         self.customer = customer
@@ -90,6 +109,8 @@ class TurnApplier:
         self.catalog = catalog
         self.today = today
         self.sales_phone = sales_phone
+        self.sales_template = sales_template
+        self.sales_template_language = sales_template_language
 
     def _say(self, text: str, order_id: int | None = None) -> list[OutgoingText]:
         return [OutgoingText(self.reply_to, text, order_id)]
@@ -240,7 +261,13 @@ class TurnApplier:
 
         out = self._say(texts.order_registered(folio), order.id)
         if self.sales_phone:
-            out.append(OutgoingText(self.sales_phone, texts.sales_notification(folio, self.customer, order, lines), order.id))
+            # Texto libre solo llega si el vendedor escribió en las últimas 24 h; con plantilla llega siempre.
+            template = None
+            if self.sales_template:
+                params = texts.sales_notification_params(folio, self.customer, order, lines)
+                template = TemplateMessage(self.sales_template, self.sales_template_language, tuple(params))
+            text = texts.sales_notification(folio, self.customer, order, lines)
+            out.append(OutgoingText(self.sales_phone, text, order.id, template))
         else:
             logger.warning("SALES_PHONE no configurado: no se avisa al vendedor del pedido %s", folio)
         return out

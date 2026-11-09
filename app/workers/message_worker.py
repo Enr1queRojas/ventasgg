@@ -5,6 +5,7 @@ estado vive en la tabla ``messages``, así que un reinicio no pierde trabajo.
 """
 
 import asyncio
+import json
 import logging
 from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
@@ -13,7 +14,7 @@ from typing import Protocol
 from app.config import Settings
 from app.db import repository
 from app.db.database import open_db, transaction
-from app.models import Message, MessageDirection
+from app.models import Message, MessageDirection, MessageType
 from app.services.message_processor import Reply, process_message
 
 logger = logging.getLogger("sales_bot.worker")
@@ -26,6 +27,10 @@ PROCESSING_FAILED_REPLY = (
 
 class TextSender(Protocol):
     def send_text(self, to: str, body: str) -> str: ...
+
+    def send_template(
+        self, to: str, name: str, language_code: str = "es_MX", components: list | None = None
+    ) -> str: ...
 
 
 Processor = Callable[..., "list[Reply] | Callable[..., list[Reply]]"]
@@ -74,7 +79,14 @@ class MessageWorker:
                     # (pedido) y se ejecuta en la misma transacción que el encolado.
                     replies = result(conn) if callable(result) else result
                     for reply in replies:
-                        repository.enqueue_outbound(conn, phone=reply.phone, text=reply.text, order_id=reply.order_id)
+                        repository.enqueue_outbound(
+                            conn,
+                            phone=reply.phone,
+                            text=reply.text,
+                            order_id=reply.order_id,
+                            message_type=MessageType.TEMPLATE if reply.template else MessageType.TEXT,
+                            template_payload=reply.template.to_json() if reply.template else None,
+                        )
                     repository.mark_processed(conn, message.id)
             except Exception as exc:
                 logger.exception("Error procesando el mensaje %s", message.id)
@@ -89,7 +101,7 @@ class MessageWorker:
             if message is None:
                 return False
             try:
-                wamid = self.sender.send_text(message.phone, message.text or "")
+                wamid = self._send(message)
             except Exception as exc:
                 transient = getattr(exc, "transient", True)
                 logger.warning("No se pudo enviar el mensaje %s: %s", message.id, exc)
@@ -98,6 +110,16 @@ class MessageWorker:
                 repository.mark_sent(conn, message.id, wamid)
                 logger.info("Mensaje %s enviado", message.id)
             return True
+
+    def _send(self, message: Message) -> str:
+        if message.message_type is MessageType.TEMPLATE and message.template_payload:
+            template = json.loads(message.template_payload)
+            params = template.get("body_params") or []
+            components = (
+                [{"type": "body", "parameters": [{"type": "text", "text": p} for p in params]}] if params else None
+            )
+            return self.sender.send_template(message.phone, template["name"], template["language"], components)
+        return self.sender.send_text(message.phone, message.text or "")
 
     def run_once(self) -> bool:
         """Procesa todo lo listo en este momento. Devuelve True si hubo trabajo."""
