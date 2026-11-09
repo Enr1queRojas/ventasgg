@@ -124,7 +124,11 @@ def sales_notification(folio: str, customer: Customer, order: Order, lines: list
     ]
     if order.notes:
         parts.append(f"Observaciones: {order.notes}")
-    parts += ["", "Estado: PENDIENTE DE VENTAS", "", "La fecha de entrega aún no está confirmada."]
+    order_number = int(folio.split("-")[-1])
+    parts += [
+        "", "Estado: PENDIENTE DE VENTAS", "", "La fecha de entrega aún no está confirmada.",
+        f"Para confirmarla responde: *programar {order_number} fecha* (ej. programar {order_number} viernes).",
+    ]
     return "\n".join(parts)
 
 
@@ -153,3 +157,43 @@ def sales_notification_params(folio: str, customer: Customer, order: Order, line
             order.notes,
         )
     ]
+
+
+# --------------------------------------------------------------------------- seguimiento (cliente)
+
+
+def delivery_scheduled(folio: str, delivery: date, note: str | None, *, rescheduled: bool) -> str:
+    head = (
+        f"La entrega de tu pedido *{folio}* se reprogramó para el *{format_date(delivery)}*."
+        if rescheduled else f"Tu pedido *{folio}* quedó programado para entrega el *{format_date(delivery)}*."
+    )
+    return head + (f"\nNota de ventas: {note}" if note else "")
+
+
+def order_delivered(folio: str) -> str:
+    return f"Tu pedido *{folio}* quedó registrado como entregado. ¡Gracias por tu compra!"
+
+
+def order_cancelled_by_sales(folio: str, reason: str | None, sales_phone: str | None) -> str:
+    parts = [f"Tu pedido *{folio}* fue cancelado por el área de ventas."]
+    if reason:
+        parts.append(f"Motivo: {reason}")
+    if sales_phone:
+        parts.append(f"Si tienes dudas, comunícate al *{format_phone_display(sales_phone)}*.")
+    return "\n".join(parts)
+
+
+def order_update_detail(kind: str, *, delivery: date | None = None, note: str | None = None) -> str:
+    """Texto corto para el parámetro {{3}} de la plantilla de actualización al cliente."""
+    if kind == "scheduled":
+        detail = f"entrega programada para el {format_date(delivery)}"
+    elif kind == "delivered":
+        detail = "pedido entregado, gracias por tu compra"
+    else:
+        detail = "pedido cancelado por el área de ventas"
+    return detail + (f" ({note})" if note else "")
+
+
+def order_update_params(customer_name: str, folio: str, detail: str) -> list[str]:
+    """Valores {{1}}..{{3}} de la plantilla de actualización al cliente (ver README)."""
+    return [_template_param(v) for v in (customer_name, folio, detail)]

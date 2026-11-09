@@ -39,14 +39,21 @@ CREATE TABLE IF NOT EXISTS orders (
     notes           TEXT,
     status          TEXT    NOT NULL DEFAULT 'draft'
                             CHECK (status IN ('draft', 'awaiting_confirmation', 'pending_sales',
-                                              'cancelled', 'closed')),
+                                              'scheduled', 'cancelled', 'closed')),
     created_at      TEXT    NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
     updated_at      TEXT    NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
     confirmed_at    TEXT,
+    -- Seguimiento de ventas: fecha de entrega confirmada, notas para el cliente, cierre.
+    delivery_date   TEXT    CHECK (delivery_date IS NULL OR date(delivery_date) IS delivery_date),
+    sales_note      TEXT,
+    delivered_at    TEXT,
+    cancelled_at    TEXT,
     -- Un pedido registrado debe tener folio, confirmación, fecha solicitada y urgencia.
-    CHECK (status NOT IN ('pending_sales', 'closed')
+    CHECK (status NOT IN ('pending_sales', 'scheduled', 'closed')
            OR (folio IS NOT NULL AND confirmed_at IS NOT NULL
-               AND requested_date IS NOT NULL AND urgency IS NOT NULL))
+               AND requested_date IS NOT NULL AND urgency IS NOT NULL)),
+    -- Programado = ventas confirmó la fecha de entrega.
+    CHECK (status <> 'scheduled' OR delivery_date IS NOT NULL)
 );
 
 -- Un solo borrador activo por cliente.
@@ -87,6 +94,6 @@ CREATE TABLE IF NOT EXISTS messages (
 CREATE INDEX IF NOT EXISTS ix_messages_queue ON messages(direction, status, next_attempt_at, id);
 CREATE INDEX IF NOT EXISTS ix_messages_phone ON messages(phone, id);
 
-PRAGMA user_version = 3;
+PRAGMA user_version = 4;
 
 COMMIT;

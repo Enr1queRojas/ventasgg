@@ -5,7 +5,11 @@ import json
 import httpx
 import pytest
 
-from app.integrations.whatsapp import WhatsAppClient, WhatsAppError, recipient_candidates
+from app.integrations.whatsapp import (
+    WhatsAppClient,
+    WhatsAppError,
+    recipient_candidates,
+)
 
 
 def make_client(handler) -> tuple[WhatsAppClient, list[httpx.Request]]:

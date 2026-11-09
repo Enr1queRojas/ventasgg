@@ -36,6 +36,19 @@ class TextSender(Protocol):
 Processor = Callable[..., "list[Reply] | Callable[..., list[Reply]]"]
 
 
+def enqueue_replies(conn, replies: "list[Reply]") -> None:
+    """Encola respuestas (texto o plantilla) para que el worker las entregue."""
+    for reply in replies:
+        repository.enqueue_outbound(
+            conn,
+            phone=reply.phone,
+            text=reply.text,
+            order_id=reply.order_id,
+            message_type=MessageType.TEMPLATE if reply.template else MessageType.TEXT,
+            template_payload=reply.template.to_json() if reply.template else None,
+        )
+
+
 def backoff_seconds(attempts: int) -> int:
     """5 s, 10 s, 20 s, 40 s... con tope de 5 min."""
     return min(5 * 2 ** max(attempts - 1, 0), MAX_BACKOFF_SECONDS)
@@ -78,15 +91,7 @@ class MessageWorker:
                     # El procesador puede devolver respuestas listas o un paso que escribe en la BD
                     # (pedido) y se ejecuta en la misma transacción que el encolado.
                     replies = result(conn) if callable(result) else result
-                    for reply in replies:
-                        repository.enqueue_outbound(
-                            conn,
-                            phone=reply.phone,
-                            text=reply.text,
-                            order_id=reply.order_id,
-                            message_type=MessageType.TEMPLATE if reply.template else MessageType.TEXT,
-                            template_payload=reply.template.to_json() if reply.template else None,
-                        )
+                    enqueue_replies(conn, replies)
                     repository.mark_processed(conn, message.id)
             except Exception as exc:
                 logger.exception("Error procesando el mensaje %s", message.id)

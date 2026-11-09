@@ -26,6 +26,7 @@ class OrderStatus(StrEnum):
     DRAFT = "draft"
     AWAITING_CONFIRMATION = "awaiting_confirmation"
     PENDING_SALES = "pending_sales"
+    SCHEDULED = "scheduled"  # ventas confirmó la fecha de entrega
     CANCELLED = "cancelled"
     CLOSED = "closed"
 
@@ -88,6 +89,10 @@ class Order(_Record):
     created_at: str
     updated_at: str
     confirmed_at: str | None
+    delivery_date: date | None = None
+    sales_note: str | None = None
+    delivered_at: str | None = None
+    cancelled_at: str | None = None
 
 
 class Message(_Record):

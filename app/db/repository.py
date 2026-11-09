@@ -246,6 +246,29 @@ def update_order(conn: sqlite3.Connection, order_id: int, **fields: object) -> N
     )
 
 
+_TRACKING_FIELDS = {"delivery_date", "sales_note", "delivered_at", "cancelled_at"}
+
+
+def transition_order(
+    conn: sqlite3.Connection, order_id: int, *, from_statuses: Sequence[str], status: str, **fields: object
+) -> bool:
+    """Cambia el estado solo si el pedido sigue en uno de ``from_statuses`` (evita dobles cambios)."""
+    unknown = set(fields) - _TRACKING_FIELDS
+    if unknown:
+        raise ValueError(f"Campos no editables: {unknown}")
+    assignments = "".join(f", {name} = ?" for name in fields)
+    placeholders = ",".join("?" * len(from_statuses))
+    return conn.execute(
+        f"UPDATE orders SET status = ?{assignments}, updated_at = ? WHERE id = ? AND status IN ({placeholders})",
+        (status, *[str(v) if v is not None else None for v in fields.values()], utc_now(), order_id, *from_statuses),
+    ).rowcount == 1
+
+
+def find_order_by_folio(conn: sqlite3.Connection, folio: str) -> Order | None:
+    row = conn.execute("SELECT * FROM orders WHERE folio = ?", (folio,)).fetchone()
+    return _order(row) if row else None
+
+
 def register_order(conn: sqlite3.Connection, order_id: int) -> str | None:
     """Pasa un pedido de ``awaiting_confirmation`` a ``pending_sales`` y asigna folio.
 
@@ -400,6 +423,47 @@ def list_orders_by_status(conn: sqlite3.Connection, statuses: Sequence[str]) -> 
         f"SELECT * FROM orders WHERE status IN ({placeholders}) ORDER BY created_at", tuple(statuses)
     )
     return [_order(r) for r in rows]
+
+
+def list_orders_for_admin(
+    conn: sqlite3.Connection, *, statuses: Sequence[str] | None = None, search: str | None = None,
+    date_from: str | None = None, date_to: str | None = None, limit: int = 200,
+) -> list[dict]:
+    """Pedidos registrados (con folio) con cliente y partidas, para el panel, WhatsApp y la exportación.
+
+    ``date_from``/``date_to`` (YYYY-MM-DD, inclusive) filtran por fecha de registro (``confirmed_at``, UTC).
+    """
+    sql = """
+        SELECT o.*, c.name AS customer_name, c.phone AS customer_phone,
+               (SELECT group_concat(p.name || ': ' || printf('%g', i.quantity) || ' ' || i.unit, '; ')
+                  FROM order_items i JOIN products p ON p.id = i.product_id
+                 WHERE i.order_id = o.id) AS items
+          FROM orders o JOIN customers c ON c.id = o.customer_id
+         WHERE o.folio IS NOT NULL
+    """
+    params: list[object] = []
+    if statuses:
+        sql += f" AND o.status IN ({','.join('?' * len(statuses))})"
+        params += list(statuses)
+    if search and search.strip():
+        term = search.strip()
+        digits = "".join(ch for ch in term if ch.isdigit())
+        sql += " AND (c.name LIKE ? OR o.folio LIKE ?" + (" OR c.phone LIKE ?" if digits else "") + ")"
+        params += [f"%{term}%", f"%{term}%"] + ([f"%{digits}%"] if digits else [])
+    if date_from:
+        sql += " AND substr(o.confirmed_at, 1, 10) >= ?"
+        params.append(date_from)
+    if date_to:
+        sql += " AND substr(o.confirmed_at, 1, 10) <= ?"
+        params.append(date_to)
+    sql += " ORDER BY o.id DESC LIMIT ?"
+    params.append(limit)
+    return [dict(r) for r in conn.execute(sql, params)]
+
+
+def count_orders_by_status(conn: sqlite3.Connection) -> dict[str, int]:
+    rows = conn.execute("SELECT status, COUNT(*) FROM orders WHERE folio IS NOT NULL GROUP BY status")
+    return {status: count for status, count in rows}
 
 
 def list_recent_orders(conn: sqlite3.Connection, *, limit: int = 100) -> list[dict]:

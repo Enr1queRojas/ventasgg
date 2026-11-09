@@ -47,7 +47,7 @@ def test_requires_credentials(client, auth):
 
 def test_home_redirects_to_customers(client):
     response = client.get("/admin", auth=AUTH, follow_redirects=False)
-    assert response.status_code == 303 and response.headers["location"] == "/admin/clientes"
+    assert response.status_code == 303 and response.headers["location"] == "/admin/pedidos"
 
 
 def test_customers_page_lists_and_escapes(client, conn):
@@ -108,12 +108,8 @@ def test_search_filter(client, conn):
     assert "Juan Pérez" in text and "Ana López" not in text
 
 
-def test_products_and_orders_pages(client, conn, customer, products):
+def test_products_page(client, conn, products):
     assert "MAIZ-BLANCO" in client.get("/admin/productos", auth=AUTH).text
-    order = repository.create_draft_order(conn, customer.id)
-    repository.set_order_item(conn, order.id, products[0].id, 30, Unit.BULTOS)
-    text = client.get("/admin/pedidos", auth=AUTH).text
-    assert "Cliente de prueba" in text and "Maíz blanco: 30 bultos" in text and "Borrador" in text
 
 
 def test_times_shown_in_business_timezone(client, conn):

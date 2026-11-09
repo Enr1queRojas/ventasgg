@@ -24,6 +24,7 @@ _OPTIONAL_FIELDS = (
     "sales_phone",
     "sales_notification_template",
     "admin_password",
+    "order_update_template",
 )
 
 # Obligatorios cuando APP_ENV=production.
@@ -69,6 +70,9 @@ class Settings(BaseSettings):
     sales_phone: str | None = None
     sales_notification_template: str | None = None  # nombre de la plantilla aprobada en Meta
     sales_notification_template_language: str = "es_MX"
+    # Plantilla para avisar al cliente cambios de su pedido (entrega programada, entregado, cancelado).
+    order_update_template: str | None = None
+    order_update_template_language: str = "es_MX"
 
     # Panel de administración (/admin). Sin contraseña queda deshabilitado.
     admin_username: str = "admin"
