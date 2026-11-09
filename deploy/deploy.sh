@@ -22,7 +22,7 @@ done
 
 if docker compose ps --status running --services 2>/dev/null | grep -qx sales-bot; then
   say "Respaldo previo"
-  deploy/backup.sh
+  SKIP_REMOTE=1 deploy/backup.sh
 fi
 
 say "Actualizando código (${BRANCH})"

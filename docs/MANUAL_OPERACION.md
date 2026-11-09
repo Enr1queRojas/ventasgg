@@ -18,17 +18,45 @@ El asistente **nunca promete fechas de entrega**: siempre indica que *ventas asi
 | Cliente registrado y activo | El asistente de pedidos |
 | Número no registrado o dado de baja | Un mensaje con el teléfono de ventas para solicitar su alta |
 | Audio, foto o documento | Una petición de escribir el pedido como texto |
-| Número de ventas | Los comandos de administración (sección 3) |
+| Número de ventas | Los comandos de pedidos y clientes (sección 4) |
 
 ## 2. Avisos de pedidos nuevos
 
-Cada pedido confirmado llega al número de ventas (**+52 871 342 7556**) con folio, cliente, teléfono, productos, fecha solicitada, urgencia y observaciones. Con eso ventas contacta al cliente para confirmar la entrega.
+Cada pedido confirmado llega al número de ventas (**+52 871 342 7556**) con folio, cliente, teléfono, productos, fecha solicitada, urgencia y observaciones, y el comando para programar la entrega.
 
 > Mientras la plantilla de aviso no esté aprobada por Meta, WhatsApp solo entrega el aviso si el número de ventas escribió al número de pedidos en las últimas 24 horas. Basta con mandar cualquier mensaje (por ejemplo «ayuda») una vez al día. Con la plantilla aprobada esto ya no es necesario.
 
-## 3. Administrar clientes desde WhatsApp
+## 3. Seguimiento de pedidos
 
-Solo el número de ventas puede usar estos comandos. Se escriben como un mensaje normal al número de pedidos:
+Cada pedido pasa por estos estados:
+
+| Estado | Qué significa | Qué hace ventas |
+|---|---|---|
+| **Pendiente de ventas** | El cliente lo confirmó | Revisar existencia y fijar la fecha de entrega |
+| **Entrega programada** | Ventas fijó la fecha | Entregar; si cambia la fecha, reprogramar |
+| **Entregado** | Pedido cerrado | — |
+| **Cancelado** | No se surtirá | — |
+
+Al programar, reprogramar, marcar entregado o cancelar, **el cliente recibe un WhatsApp automático** con el folio, la fecha y la nota (o el motivo de cancelación). Se puede hacer desde el panel o desde el WhatsApp de ventas.
+
+## 4. Comandos desde el WhatsApp de ventas
+
+Solo el número de ventas puede usar estos comandos. Se escriben como un mensaje normal al número de pedidos. El número de pedido es el folio sin ceros: `12` = `PED-0012`.
+
+**Pedidos**
+
+| Escribe | Qué pasa |
+|---|---|
+| `pedidos` | Lista los pendientes y las entregas programadas |
+| `pedido 12` | Muestra el detalle del pedido |
+| `programar 12 viernes` | Fija la entrega para el próximo viernes y avisa al cliente |
+| `programar 12 15/11 llega por la tarde` | Igual, con una nota que también recibe el cliente |
+| `entregado 12` | Lo marca como entregado y avisa al cliente |
+| `cancelar 12 sin existencia` | Lo cancela, con el motivo, y avisa al cliente |
+
+Fechas que entiende: `hoy`, `mañana`, `pasado mañana`, un día de la semana (`lunes` … `domingo`, siempre el próximo), `15/11` o `15/11/2026`. Para cambiar una fecha ya programada, vuelve a usar `programar`.
+
+**Clientes**
 
 | Escribe | Qué pasa |
 |---|---|
@@ -36,34 +64,35 @@ Solo el número de ventas puede usar estos comandos. Se escriben como un mensaje
 | `baja 871 123 4567` | Lo da de baja: ya no puede hacer pedidos |
 | `clientes` | Lista los clientes activos |
 | `buscar juan` | Busca por nombre o por parte del teléfono (incluye los dados de baja) |
-| `ayuda` | Muestra los comandos |
+| `ayuda` | Muestra todos los comandos |
 
 - El teléfono puede escribirse con o sin espacios, guiones o `+52`. Diez dígitos se toman como número de México.
 - El nombre puede ir antes o después del teléfono.
-- El cliente puede escribir en cuanto recibes la confirmación.
+- El cliente puede escribir en cuanto recibes la confirmación del alta.
 
-## 4. Panel de administración
+## 5. Panel de administración
 
 Desde una computadora con acceso al servidor se abre un panel con usuario y contraseña:
 
+- **Pedidos** (pantalla inicial): pestañas *Pendientes*, *Programados*, *Entregados*, *Cancelados* y *Todos* con el número de pedidos en cada una; búsqueda por folio, cliente o teléfono; filtro por fecha. **Gestionar** abre el pedido para programar la entrega (fecha y nota), marcarlo entregado o cancelarlo, y muestra los mensajes enviados al cliente y si llegaron. La casilla *Avisar al cliente por WhatsApp* viene marcada; desmárcala si ya le avisaste por otro medio.
+- **Exportar a Excel:** botón en *Pedidos*; descarga los pedidos del filtro actual en dos hojas: *Pedidos* (uno por fila) y *Partidas* (un producto por fila, con kilos equivalentes).
 - **Clientes:** agregar, corregir nombres, activar/desactivar y buscar.
-- **Productos:** el catálogo vigente (código, nombre, alias, unidades, kg por bulto).
-- **Pedidos:** los últimos 200 con cliente, productos, fecha solicitada, urgencia y estado.
+- **Productos:** agregar, editar y activar/desactivar productos (sección 6).
 - **Mensajes:** los mensajes que no se pudieron entregar y el motivo.
 
 El panel no está publicado en internet. Para abrirlo, el administrador técnico crea un túnel seguro (ver README, «Panel web /admin») y entra a `http://localhost:8003/admin`.
 
-## 5. Catálogo de productos
+## 6. Catálogo de productos
 
-El catálogo lo mantiene el administrador técnico (archivo `data/seed/products.csv`). Para agregar o cambiar un producto, envíale:
+Se administra en el panel → **Productos**:
 
-- Código (por ejemplo `MAIZ-BLANCO`), nombre y otras formas en que los clientes lo llaman (alias).
-- Unidades permitidas: kilos, bultos y/o piezas.
-- Kilos por bulto, si aplica.
+- **Código:** identificador único (por ejemplo `MAIZ-BLANCO`). No se puede cambiar después.
+- **Nombre** y **otras formas de llamarlo** (separadas por coma): cómo lo escriben los clientes («blanco», «maíz bco»). Mientras más formas, mejor lo reconoce el asistente.
+- **Unidades:** kilos, bultos y/o piezas (cajas, pacas). El asistente rechaza pedidos en otras unidades.
+- **Kg por bulto:** si se llena, el asistente puede convertir bultos a kilos; si no, nunca lo hace.
+- **Activo:** desmarcar un producto lo saca de las conversaciones sin borrar los pedidos anteriores.
 
-Los productos inactivos dejan de reconocerse en las conversaciones.
-
-## 6. Problemas frecuentes
+## 7. Problemas frecuentes
 
 | Situación | Qué revisar |
 |---|---|
@@ -71,12 +100,15 @@ Los productos inactivos dejan de reconocerse en las conversaciones.
 | No llegan avisos de pedidos a ventas | Que la plantilla esté aprobada, o que ventas haya escrito en las últimas 24 h. En el panel → Mensajes aparece el motivo |
 | El bot no contesta a nadie | Avisar al administrador técnico (puede ser el servidor, el token de Meta o la app de Meta) |
 | El bot entendió mal un pedido | El cliente puede corregirlo antes de decir «sí» («no, eran 50 bultos») o escribir «cancelar» para empezar de nuevo |
+| Un cliente no recibió el aviso de su entrega | Panel → el pedido → *Mensajes del pedido* muestra si se envió o el motivo del fallo |
+| Me equivoqué de fecha al programar | Vuelve a programar con la fecha correcta; el cliente recibe el aviso de reprogramación |
 
-## 7. Respaldos y datos
+## 8. Respaldos, alertas y datos
 
-- La base de datos (clientes, pedidos y conversaciones) se respalda automáticamente cada noche en el servidor.
+- La base de datos (clientes, pedidos y conversaciones) se respalda automáticamente cada noche en el servidor y una copia cifrada se guarda fuera de él.
+- El administrador técnico recibe alertas en su celular si el servicio se cae, si un mensaje no se pudo entregar o si falla un respaldo.
 - Los mensajes de los clientes se guardan para dar seguimiento a los pedidos. Sólo el personal autorizado tiene acceso al panel.
 
-## 8. Contacto técnico
+## 9. Contacto técnico
 
 Administrador técnico: _(nombre, teléfono y correo)_

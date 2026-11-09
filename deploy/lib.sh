@@ -5,7 +5,7 @@
 # Valor de una variable de .env (sin comillas). Vacío si no existe.
 env_value() {
   [ -f .env ] || return 0
-  grep -E "^$1=" .env | tail -n 1 | cut -d= -f2- | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' \
+  { grep -E "^$1=" .env || true; } | tail -n 1 | cut -d= -f2- | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' \
     -e 's/^"\(.*\)"$/\1/' -e "s/^'\(.*\)'$/\1/"
 }
 
