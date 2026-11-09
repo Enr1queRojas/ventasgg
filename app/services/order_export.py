@@ -40,6 +40,11 @@ def _sheet(wb: Workbook, title: str, headers: list[str], rows: list[list], width
         cell.font, cell.fill = _HEADER_FONT, _HEADER_FILL
     for row in rows:
         ws.append(row)
+        # Texto de clientes (observaciones, notas) que empieza con «=» se guardaría como fórmula:
+        # se fuerza a texto literal para que Excel lo muestre tal cual y nunca lo evalúe.
+        for cell in ws[ws.max_row]:
+            if isinstance(cell.value, str) and cell.value.startswith("="):
+                cell.data_type = "s"
     for index, width in enumerate(widths, start=1):
         ws.column_dimensions[get_column_letter(index)].width = width
         if index in formats:

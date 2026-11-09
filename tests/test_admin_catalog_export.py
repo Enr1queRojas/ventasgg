@@ -121,3 +121,17 @@ def test_export_xlsx(client, conn, customer, products):
 
 def test_export_requires_auth(client):
     assert client.get("/admin/pedidos/exportar.xlsx").status_code == 401
+
+
+def test_export_never_writes_formulas(client, conn, customer, products):
+    """Texto del cliente que parece fórmula se exporta como texto literal (inyección de fórmulas)."""
+    order = _registered(conn, customer, products[0], qty=1, unit=Unit.BULTOS)
+    conn.execute("UPDATE orders SET notes = '=HYPERLINK(\"http://x\",\"y\")', urgency_note = '=1+1' WHERE id = ?", (order.id,))
+    content = client.get("/admin/pedidos/exportar.xlsx?estado=todos", auth=AUTH).content
+    sheet = load_workbook(BytesIO(content))["Pedidos"]
+    header = [c.value for c in sheet[1]]
+    row = sheet[2]
+    for column in ("Observaciones", "Nota de urgencia"):
+        cell = row[header.index(column)]
+        assert cell.data_type == "s" and cell.value.startswith("=")
+    assert row[header.index("Observaciones")].value == '=HYPERLINK("http://x","y")'
