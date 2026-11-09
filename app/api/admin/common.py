@@ -73,11 +73,22 @@ def csrf_token(settings: Settings) -> str:
     return hmac.new(key, b"ventasgg-admin-csrf", hashlib.sha256).hexdigest()
 
 
-async def read_form(request: Request, settings: Settings) -> dict[str, str]:
+class FormData(dict[str, str]):
+    """Campos del formulario (primer valor de cada uno) y, con ``getlist``, todos los valores."""
+
+    def __init__(self, values: dict[str, list[str]]):
+        super().__init__({k: v[0] for k, v in values.items()})
+        self._values = values
+
+    def getlist(self, key: str) -> list[str]:
+        return list(self._values.get(key, []))
+
+
+async def read_form(request: Request, settings: Settings) -> FormData:
     body = await request.body()
     if len(body) > MAX_FORM_BYTES:
         raise HTTPException(status.HTTP_413_REQUEST_ENTITY_TOO_LARGE)
-    data = {k: v[0] for k, v in parse_qs(body.decode("utf-8", errors="replace"), keep_blank_values=True).items()}
+    data = FormData(parse_qs(body.decode("utf-8", errors="replace"), keep_blank_values=True))
     if not hmac.compare_digest(data.get("csrf", ""), csrf_token(settings)):
         raise HTTPException(status.HTTP_403_FORBIDDEN, detail="Formulario vencido; recarga la página")
     return data

@@ -498,3 +498,21 @@ def count_failed_messages_since(conn: sqlite3.Connection, *, hours: int) -> int:
     return conn.execute(
         "SELECT COUNT(*) FROM messages WHERE status = 'failed' AND updated_at >= ?", (cutoff,)
     ).fetchone()[0]
+
+
+def list_items_for_orders(conn: sqlite3.Connection, order_ids: Sequence[int]) -> list[dict]:
+    """Partidas (producto, cantidad, unidad, kg por bulto) de varios pedidos, para exportar."""
+    if not order_ids:
+        return []
+    rows: list[dict] = []
+    for start in range(0, len(order_ids), 500):  # límite de variables de SQLite
+        chunk = list(order_ids[start:start + 500])
+        rows += [
+            dict(r) for r in conn.execute(
+                f"""SELECT i.order_id, p.sku, p.name, i.quantity, i.unit, p.kg_per_bag
+                      FROM order_items i JOIN products p ON p.id = i.product_id
+                     WHERE i.order_id IN ({','.join('?' * len(chunk))}) ORDER BY i.order_id, i.id""",
+                chunk,
+            )
+        ]
+    return rows

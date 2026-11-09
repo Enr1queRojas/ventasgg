@@ -6,10 +6,11 @@ Lista con filtros y detalle de cada pedido con las acciones de seguimiento: prog
 
 from datetime import date, datetime
 from html import escape
+from urllib.parse import urlencode
 
 from fastapi import HTTPException, Request, status
 from fastapi.concurrency import run_in_threadpool
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, RedirectResponse, Response
 
 from app.api.admin.common import (
     STATUS_LABELS,
@@ -29,6 +30,7 @@ from app.models import OrderStatus
 from app.phone import InvalidPhoneError, format_phone_display, normalize_phone
 from app.services import order_tracking
 from app.services.message_processor import notify_config
+from app.services.order_export import build_orders_workbook
 from app.workers.message_worker import enqueue_replies
 
 FILTERS = (
@@ -39,6 +41,7 @@ FILTERS = (
     ("todos", "Todos", ()),
 )
 _FILTER_STATUSES = {key: tuple(s.value for s in statuses) for key, _, statuses in FILTERS}
+EXPORT_LIMIT = 20_000
 _STATE_CLASS = {"pending_sales": "warn", "scheduled": "", "closed": "", "cancelled": "off"}
 
 
@@ -98,7 +101,7 @@ def orders_page(
         )
 
     rows = "".join(row(o) for o in orders) or "<tr><td colspan=9 class=muted>No hay pedidos con estos filtros.</td></tr>"
-    export_query = f"estado={estado}" + (f"&desde={date_from}" if date_from else "") + (f"&hasta={date_to}" if date_to else "")
+    export_query = urlencode({"estado": estado, "q": q, "desde": date_from or "", "hasta": date_to or ""})
     body = f"""
 <nav class="tabs">{''.join(tabs)}</nav>
 <div class="card"><form method="get" class="row">
@@ -118,6 +121,24 @@ def _valid_date(value: str) -> str | None:
         return date.fromisoformat(value).isoformat() if value else None
     except ValueError:
         return None
+
+
+@router.get("/pedidos/exportar.xlsx", include_in_schema=False)
+def export_orders(settings: Admin, estado: str = "todos", q: str = "", desde: str = "", hasta: str = "") -> Response:
+    statuses = _FILTER_STATUSES.get(estado, ())
+    with open_db(settings.database_path) as conn:
+        orders = repository.list_orders_for_admin(
+            conn, statuses=statuses or None, search=q or None,
+            date_from=_valid_date(desde), date_to=_valid_date(hasta), limit=EXPORT_LIMIT,
+        )
+        items = repository.list_items_for_orders(conn, [o["id"] for o in orders])
+    content = build_orders_workbook(orders, items, settings.timezone)
+    filename = f"pedidos-{estado}-{datetime.now(settings.timezone):%Y%m%d-%H%M}.xlsx"
+    return Response(
+        content,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"', "Cache-Control": "no-store"},
+    )
 
 
 @router.get("/pedidos/{order_id:int}", response_class=HTMLResponse)

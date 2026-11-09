@@ -9,7 +9,6 @@ from app.api.admin import csrf_token
 from app.config import Settings
 from app.db import repository
 from app.main import create_app
-from app.models import Unit
 
 AUTH = ("admin", "clave-secreta")
 

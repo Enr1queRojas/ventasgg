@@ -99,7 +99,9 @@ def test_seed_files_load_and_are_idempotent(conn):
     second_c = seed_customers(conn, SEED_DIR / "customers.csv")
     second_p = seed_products(conn, SEED_DIR / "products.csv")
     assert (second_c.inserted, second_c.updated, second_c.skipped) == (0, 0, first_c.inserted)
-    assert (second_p.inserted, second_p.updated) == (0, first_p.inserted)
+    assert (second_p.inserted, second_p.updated, second_p.skipped) == (0, 0, first_p.inserted)
+    forced = seed_products(conn, SEED_DIR / "products.csv", update_existing=True)
+    assert (forced.inserted, forced.updated) == (0, first_p.inserted)
     assert conn.execute("SELECT COUNT(*) FROM products").fetchone()[0] == first_p.inserted
 
 
