@@ -98,9 +98,20 @@ def test_seed_files_load_and_are_idempotent(conn):
 
     second_c = seed_customers(conn, SEED_DIR / "customers.csv")
     second_p = seed_products(conn, SEED_DIR / "products.csv")
-    assert (second_c.inserted, second_c.updated) == (0, first_c.inserted)
+    assert (second_c.inserted, second_c.updated, second_c.skipped) == (0, 0, first_c.inserted)
     assert (second_p.inserted, second_p.updated) == (0, first_p.inserted)
     assert conn.execute("SELECT COUNT(*) FROM products").fetchone()[0] == first_p.inserted
+
+
+def test_seed_does_not_touch_existing_customers(conn, tmp_path: Path):
+    """Un cliente dado de baja (o renombrado) desde WhatsApp o el panel no se reactiva al recargar el CSV."""
+    repository.upsert_customer(conn, name="Nombre editado", phone="+52 55 1234 5678", active=False)
+    csv_file = tmp_path / "customers.csv"
+    csv_file.write_text("name,phone,active\nNombre CSV,+52 55 1234 5678,true\nNuevo,+52 55 8765 4321,true\n", encoding="utf-8")
+    result = seed_customers(conn, csv_file)
+    assert (result.inserted, result.skipped) == (1, 1)
+    existing = repository.get_customer_by_phone(conn, "525512345678", active_only=False)
+    assert existing.name == "Nombre editado" and not existing.active
 
 
 def test_seed_reports_bad_line(conn, tmp_path: Path):

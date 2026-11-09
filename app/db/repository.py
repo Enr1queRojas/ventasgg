@@ -67,6 +67,39 @@ def upsert_customer(conn: sqlite3.Connection, *, name: str, phone: str, active: 
     return _customer(row)
 
 
+def set_customer_active(conn: sqlite3.Connection, phone: str, active: bool) -> Customer | None:
+    """Activa o desactiva por teléfono. Devuelve ``None`` si el número no está registrado."""
+    row = conn.execute(
+        "UPDATE customers SET active = ? WHERE phone = ? RETURNING *", (int(active), normalize_phone(phone))
+    ).fetchone()
+    return _customer(row) if row else None
+
+
+def list_customers(
+    conn: sqlite3.Connection, *, search: str | None = None, active_only: bool = False, limit: int = 500
+) -> list[Customer]:
+    """Clientes ordenados por nombre; ``search`` filtra por nombre o dígitos del teléfono."""
+    sql, params = "SELECT * FROM customers WHERE 1 = 1", []
+    if active_only:
+        sql += " AND active = 1"
+    if search and search.strip():
+        digits = "".join(c for c in search if c.isdigit())
+        sql += " AND (name LIKE ? ESCAPE '\\'" + (" OR phone LIKE ?" if digits else "") + ")"
+        escaped = search.strip().replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+        params.append(f"%{escaped}%")
+        if digits:
+            params.append(f"%{digits}%")
+    sql += " ORDER BY name COLLATE NOCASE, id LIMIT ?"
+    params.append(limit)
+    return [_customer(r) for r in conn.execute(sql, params)]
+
+
+def count_customers(conn: sqlite3.Connection) -> tuple[int, int]:
+    """(activos, total)."""
+    row = conn.execute("SELECT COALESCE(SUM(active), 0), COUNT(*) FROM customers").fetchone()
+    return row[0], row[1]
+
+
 # --------------------------------------------------------------------------- products
 
 
@@ -367,3 +400,22 @@ def list_orders_by_status(conn: sqlite3.Connection, statuses: Sequence[str]) -> 
         f"SELECT * FROM orders WHERE status IN ({placeholders}) ORDER BY created_at", tuple(statuses)
     )
     return [_order(r) for r in rows]
+
+
+def list_recent_orders(conn: sqlite3.Connection, *, limit: int = 100) -> list[dict]:
+    """Pedidos más recientes (sin borradores vacíos) con cliente y partidas, para el panel de administración."""
+    rows = conn.execute(
+        """
+        SELECT o.id, o.folio, o.status, o.requested_date, o.urgency, o.urgency_note, o.notes,
+               o.created_at, o.confirmed_at, c.name AS customer_name, c.phone AS customer_phone,
+               (SELECT group_concat(p.name || ': ' || printf('%g', i.quantity) || ' ' || i.unit, '; ')
+                  FROM order_items i JOIN products p ON p.id = i.product_id
+                 WHERE i.order_id = o.id) AS items
+          FROM orders o JOIN customers c ON c.id = o.customer_id
+         WHERE o.status <> 'draft' OR EXISTS (SELECT 1 FROM order_items i WHERE i.order_id = o.id)
+         ORDER BY o.id DESC
+         LIMIT ?
+        """,
+        (limit,),
+    )
+    return [dict(r) for r in rows]

@@ -23,6 +23,7 @@ _OPTIONAL_FIELDS = (
     "whatsapp_api_version",
     "sales_phone",
     "sales_notification_template",
+    "admin_password",
 )
 
 # Obligatorios cuando APP_ENV=production.
@@ -68,6 +69,10 @@ class Settings(BaseSettings):
     sales_phone: str | None = None
     sales_notification_template: str | None = None  # nombre de la plantilla aprobada en Meta
     sales_notification_template_language: str = "es_MX"
+
+    # Panel de administración (/admin). Sin contraseña queda deshabilitado.
+    admin_username: str = "admin"
+    admin_password: SecretStr | None = None
 
     # Worker
     worker_enabled: bool = True

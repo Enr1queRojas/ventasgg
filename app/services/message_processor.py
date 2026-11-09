@@ -1,6 +1,7 @@
 """Coordina el procesamiento de cada mensaje entrante.
 
-1. Identifica al remitente (vendedor, desconocido, cliente).
+1. Identifica al remitente (vendedor, desconocido, cliente). El vendedor administra
+   clientes con comandos (``admin_commands``).
 2. Para clientes: arma el contexto y llama al agente de OpenAI (fuera de transacción).
 3. Devuelve un paso ``commit(conn)`` que el worker ejecuta dentro de una transacción:
    aplica los cambios al pedido y produce las respuestas a encolar.
@@ -16,7 +17,7 @@ from app.db import repository
 from app.integrations.openai_agent import Agent, AgentContext, OpenAISalesAgent
 from app.models import Message, MessageDirection, MessageType
 from app.phone import InvalidPhoneError, normalize_phone
-from app.services import notification_service
+from app.services import admin_commands, notification_service
 from app.services.catalog_service import CatalogService
 from app.services.order_service import OutgoingText, TurnApplier, summarize_order_for_agent
 
@@ -60,7 +61,13 @@ def process_message(
         return []
 
     if settings.sales_phone and phone == settings.sales_phone:
-        return [Reply(message.phone, notification_service.sales_number_reply())]
+        command = admin_commands.parse_command(message.text)
+
+        def run_admin_command(tx_conn: sqlite3.Connection) -> list[Reply]:
+            text = admin_commands.execute(tx_conn, command, sales_phone=settings.sales_phone)
+            return [Reply(message.phone, text)]
+
+        return run_admin_command
 
     customer = repository.get_customer_by_phone(conn, phone)
     if customer is None:

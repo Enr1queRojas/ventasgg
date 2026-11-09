@@ -9,7 +9,7 @@ Backend (FastAPI + SQLite) que recibe pedidos por WhatsApp, los valida contra un
 | Remitente / mensaje | Respuesta |
 |---|---|
 | Número no registrado | Mensaje fijo con el teléfono de ventas (`SALES_PHONE`) |
-| `SALES_PHONE` | Fuera del flujo de pedidos |
+| `SALES_PHONE` | Fuera del flujo de pedidos; administra clientes con comandos (ver [Administrar clientes](#administrar-clientes)) |
 | Audio, foto, documento | Pide el pedido por texto |
 | Cliente registrado | El modelo (`OPENAI_MODEL`) interpreta; Python valida contra el catálogo, actualiza el borrador, pregunta lo que falta y, con el pedido completo, muestra un resumen. Solo un "sí" al resumen vigente registra el pedido (`pending_sales`, folio `PED-0001`) y avisa al vendedor |
 
@@ -35,7 +35,9 @@ python -m scripts.init_db          # crea data/sales_bot.db (tablas e índices)
 python -m scripts.seed_db          # carga/actualiza clientes y productos desde data/seed/*.csv
 ```
 
-`seed_db` es idempotente: actualiza por teléfono (clientes) y SKU (productos) sin duplicar. Si alguna fila es inválida, no se guarda nada y se indica la línea.
+`seed_db` es idempotente: actualiza productos por SKU y **solo agrega clientes nuevos** (los teléfonos que ya están en la base no se modifican, para no reactivar ni renombrar a quien se dio de baja desde WhatsApp o el panel). Si alguna fila es inválida, no se guarda nada y se indica la línea.
+
+`customers.csv` sirve para la carga inicial; después, los clientes se administran desde WhatsApp o desde el panel `/admin` (ver [Administrar clientes](#administrar-clientes)).
 
 ### `data/seed/customers.csv`
 
@@ -124,13 +126,15 @@ Variables en `.env` (nunca se versiona ni entra en la imagen Docker). Con `APP_E
 | `SALES_PHONE` | ✔ | `+52 33 1234 5678` |
 | `SALES_NOTIFICATION_TEMPLATE` | | Nombre (no el texto) de la plantilla aprobada para avisar al vendedor, p. ej. `nuevo_pedido_ventas`. Vacía: el aviso va como texto libre |
 | `SALES_NOTIFICATION_TEMPLATE_LANGUAGE` | | Idioma con el que se aprobó la plantilla. `es_MX` por defecto |
+| `ADMIN_USERNAME` | | Usuario del panel `/admin`. `admin` por defecto |
+| `ADMIN_PASSWORD` | | Contraseña del panel `/admin`. Vacía: el panel queda deshabilitado (404) |
 | `WORKER_ENABLED` | | `true` |
 | `WORKER_POLL_INTERVAL` | | `1` (segundos) |
 | `WORKER_MAX_ATTEMPTS` | | `5` |
 
 ## Despliegue en la VM (Oracle Cloud)
 
-Una sola instancia: contenedor `ventasgg-sales-bot`, puerto `127.0.0.1:8003`, base SQLite en el volumen `ventasgg_sales-bot-data` (`/data` dentro del contenedor). El acceso público es el túnel **granitoia**, que ya enruta `ventas.proadel.app/webhook` → `http://127.0.0.1:8003`.
+Una sola instancia: contenedor `ventasgg-sales-bot`, puerto `127.0.0.1:8003`, base SQLite en el volumen `ventasgg_sales-bot-data` (`/data` dentro del contenedor). `compose.yaml` fija el nombre del proyecto y del volumen, así que la base es la misma aunque el repo se clone en otra carpeta. El acceso público es el túnel **granitoia**, que ya enruta `ventas.proadel.app/webhook` → `http://127.0.0.1:8003`.
 
 ### Primera vez
 
@@ -157,6 +161,16 @@ docker compose up -d --build
 docker compose run --rm sales-bot python -m scripts.seed_db   # solo si cambiaron los CSV
 ```
 
+Lo único que no está en el repo es `.env`. Clientes, pedidos y mensajes viven en el volumen, no en la carpeta, así que si prefieres clonar en una carpeta nueva basta con copiar `.env` (no hace falta llevarse `data/`):
+
+```bash
+git clone https://github.com/Enr1queRojas/ventasgg.git ventasgg-nuevo
+cp ventasgg/.env ventasgg-nuevo/ && chmod 600 ventasgg-nuevo/.env
+cd ventasgg && docker compose down && cd ../ventasgg-nuevo && docker compose up -d --build
+```
+
+Antes de este cambio el volumen tomaba el nombre de la carpeta (`<carpeta>_sales-bot-data`); si alguna vez levantaste el bot desde una carpeta con otro nombre, `docker volume ls` mostrará ese volumen aparte.
+
 Al reiniciar, el worker retoma los mensajes que quedaron a medias; la base vive en el volumen y sobrevive a `down`/`up` y a reconstrucciones. **No usar `docker compose down -v`**: borra el volumen con los pedidos.
 
 ### Respaldo de la base
@@ -172,6 +186,40 @@ docker compose cp sales-bot:/data/respaldo.db ./respaldo-$(date +%F).db
 docker compose exec sales-bot python -c "import sqlite3; c=sqlite3.connect('/data/sales_bot.db'); [print(r) for r in c.execute('select folio,status,requested_date,urgency,created_at from orders order by id desc limit 20')]"
 docker compose exec sales-bot python -c "import sqlite3; c=sqlite3.connect('/data/sales_bot.db'); [print(r) for r in c.execute(\"select id,direction,status,last_error from messages where status='failed' order by id desc limit 20\")]"
 ```
+
+## Administrar clientes
+
+Los clientes viven en la base de datos. `customers.csv` solo sirve para la carga inicial.
+
+### Desde WhatsApp (solo el número de ventas)
+
+El número configurado en `SALES_PHONE` escribe al bot:
+
+| Mensaje | Qué hace |
+|---|---|
+| `alta Juan Pérez 871 123 4567` | Registra al cliente; si el teléfono ya existe, actualiza el nombre y lo reactiva. También acepta el teléfono primero |
+| `baja 871 123 4567` | Lo desactiva: deja de poder hacer pedidos y recibe el mensaje de «no registrado» |
+| `clientes` | Lista los clientes activos |
+| `buscar juan` | Busca por nombre o teléfono (incluye inactivos) |
+| `ayuda` (o cualquier otro texto) | Muestra los comandos |
+
+Un teléfono de 10 dígitos se toma como número de México (+52). Los comandos se interpretan con reglas fijas, sin el modelo de OpenAI, y solo los acepta `SALES_PHONE`: si un cliente escribe «alta …», entra al flujo normal de pedidos.
+
+### Panel web `/admin`
+
+Con `ADMIN_PASSWORD` en `.env` (y opcionalmente `ADMIN_USERNAME`), el backend sirve un panel protegido con usuario y contraseña:
+
+- **Clientes:** agregar, editar nombre, activar/desactivar, buscar y filtrar.
+- **Productos:** consulta del catálogo (se edita en `products.csv` + `seed_db`).
+- **Pedidos:** los últimos 200 con cliente, productos, fecha solicitada, urgencia y estado.
+
+El túnel solo publica `/webhook*`, así que el panel **no queda expuesto a internet**. Para abrirlo desde tu computadora, crea un túnel SSH a la VM y entra a http://localhost:8003/admin:
+
+```bash
+ssh -L 8003:127.0.0.1:8003 usuario@ip-de-la-vm
+```
+
+Si quieres publicarlo en un dominio, protégelo además con Cloudflare Access; no lo publiques solo con la contraseña.
 
 ## Aviso al vendedor (plantilla)
 

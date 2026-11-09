@@ -1,4 +1,9 @@
-"""Carga o actualiza clientes y productos desde CSV (idempotente: upsert por teléfono / SKU).
+"""Carga clientes y productos desde CSV (idempotente).
+
+- Productos: upsert por SKU; el CSV es la fuente del catálogo.
+- Clientes: solo agrega teléfonos nuevos. Los existentes no se tocan, porque después de la
+  carga inicial se administran desde WhatsApp (número de ventas) o el panel /admin, y volver
+  a cargar el CSV no debe reactivar ni renombrar a nadie.
 
 Uso:  python -m scripts.seed_db [--db RUTA] [--customers CSV] [--products CSV]
 
@@ -34,6 +39,7 @@ class SeedError(ValueError):
 class SeedResult:
     inserted: int = 0
     updated: int = 0
+    skipped: int = 0  # clientes que ya estaban en la base (no se modifican)
 
 
 def _bool(value: str | None, *, default: bool = True) -> bool:
@@ -69,14 +75,14 @@ def seed_customers(conn: sqlite3.Connection, path: Path) -> SeedResult:
             if phone in seen:
                 raise ValueError(f"teléfono repetido en el archivo: {phone}")
             seen.add(phone)
-            existed = repository.get_customer_by_phone(conn, phone, active_only=False) is not None
-            repository.upsert_customer(conn, name=name, phone=phone, active=_bool(row.get("active")))
+            active = _bool(row.get("active"))
+            if repository.get_customer_by_phone(conn, phone, active_only=False) is not None:
+                result.skipped += 1
+                continue
+            repository.upsert_customer(conn, name=name, phone=phone, active=active)
         except (ValueError, sqlite3.IntegrityError) as exc:
             raise SeedError(f"{path.name}, línea {line}: {exc}") from exc
-        if existed:
-            result.updated += 1
-        else:
-            result.inserted += 1
+        result.inserted += 1
     return result
 
 
@@ -129,7 +135,7 @@ def main() -> int:
             print(f"Error: {exc}. No se guardaron cambios.", file=sys.stderr)
             return 1
 
-    print(f"Clientes: {customers.inserted} nuevos, {customers.updated} actualizados")
+    print(f"Clientes: {customers.inserted} nuevos, {customers.skipped} ya existían (sin cambios)")
     print(f"Productos: {products.inserted} nuevos, {products.updated} actualizados")
     print(f"Base de datos: {db_path}")
     return 0

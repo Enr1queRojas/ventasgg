@@ -9,6 +9,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
+from app.api.admin import router as admin_router
 from app.api.webhook import router as webhook_router
 from app.config import Settings, get_settings
 from app.db.database import check_db, init_db, open_db
@@ -74,6 +75,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app = FastAPI(title="WhatsApp Sales Bot", version="0.1.0", lifespan=lifespan)
     app.state.settings = settings or get_settings()
     app.include_router(webhook_router)
+    app.include_router(admin_router)
 
     @app.get("/health")
     def health(request: Request) -> JSONResponse:

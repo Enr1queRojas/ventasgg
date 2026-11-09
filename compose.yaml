@@ -1,3 +1,6 @@
+# Nombre fijo del proyecto: el volumen y la red no cambian aunque el repo se clone en otra carpeta.
+name: ventasgg
+
 services:
   sales-bot:
     build: .
@@ -25,3 +28,6 @@ services:
 
 volumes:
   sales-bot-data:
+    # Nombre explícito: la base de datos (clientes, pedidos, mensajes) vive aquí y sobrevive a
+    # reconstrucciones, a `down`/`up` y a clonar el repo en una carpeta nueva.
+    name: ventasgg_sales-bot-data

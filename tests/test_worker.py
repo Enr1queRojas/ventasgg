@@ -84,7 +84,8 @@ def test_sales_phone_is_outside_order_flow(conn, worker_settings, clock):
     inbound(conn, "w1", "5213311112222")
     sender = FakeSender()
     MessageWorker(worker_settings, sender, clock=clock).run_once()
-    assert "número de ventas" in sender.sent[0][1]
+    assert "Comandos para administrar clientes" in sender.sent[0][1]  # «Hola» no es un comando: ayuda
+    assert conn.execute("SELECT COUNT(*) FROM orders").fetchone()[0] == 0
 
 
 def test_unsupported_media_asks_for_text(conn, customer, worker_settings, clock):

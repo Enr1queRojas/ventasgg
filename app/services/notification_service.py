@@ -68,10 +68,6 @@ def unsupported_message_reply() -> str:
     )
 
 
-def sales_number_reply() -> str:
-    return "Este es el número de ventas registrado. Aquí recibirás los avisos de pedidos nuevos."
-
-
 def provisional_customer_reply(customer: Customer) -> str:
     """Respuesta cuando el agente de OpenAI no está configurado."""
     return (
