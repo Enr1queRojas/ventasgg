@@ -64,8 +64,12 @@ def unknown_customer_message(sales_phone: str | None) -> str:
 def greeting(customer_name: str) -> str:
     """Saludo fijo cuando el cliente saluda sin tener un pedido en curso."""
     return (
-        f"Hola {customer_name}\n"
-        "Por favor indica cuántos kilos de Maíz, Frijol (Bill-z, Peruano, Pinto, Saltillo) o papel necesitas."
+        f"Hola {customer_name} 👋 ¿Qué pedido vamos a surtir hoy? 🚚\n\n"
+        "Indícame los kilos que necesitas de cada producto:\n"
+        "🌽 *Maíz*\n"
+        "🫘 *Frijol* (Bill-z, Peruano, Pinto o Saltillo)\n"
+        "📄 *Papel*\n\n"
+        '💡 _Ejemplo: "50 kg de maíz, 20 de frijol pinto y 10 de papel"_'
     )
 
 
